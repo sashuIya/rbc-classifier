@@ -1,3 +1,11 @@
 matplotlib==3.7.1
 opencv-python==4.8.0.74
 pandas==2.0.3
+dash
+plotly
+ipywidgets
+git+https://github.com/facebookresearch/segment-anything.git
+torch
+torchvision
+opencv-python 
+pycocotools
