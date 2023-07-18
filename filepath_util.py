@@ -19,5 +19,10 @@ def read_masks_for_image(image_filepath):
     masks_filepath = get_masks_filepath(image_filepath)
     with open(masks_filepath,'rb') as f:
         masks = pickle.load(f)
-    return masks
+    
+    sorted_masks = sorted(masks, key=(lambda x: x['area']))
+    for i, mask in enumerate(sorted_masks):
+        mask['id'] = i
+
+    return sorted_masks
 

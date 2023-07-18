@@ -1,4 +1,4 @@
-from dash import Dash, html, dcc, callback, Output, Input, State
+from dash import Dash, html, dcc, callback, Output, Input, State, ctx
 from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 
@@ -27,6 +27,16 @@ DISPLAY_MASKS = 'Masks'
 DISPLAY_LABELED_DATA = 'Labeled data'
 DISPLAY_UNLABELED_DATA = 'Unlabeled data'
 DISPLAY_OPTIONS = [DISPLAY_IMAGE, DISPLAY_MASKS, DISPLAY_LABELED_DATA, DISPLAY_UNLABELED_DATA]
+
+LABEL_UNLABELED = 'unlabeled'
+LABEL_WRONG = 'wrong'
+LABELS = {
+    LABEL_UNLABELED: {'color': [255, 255, 255]},
+    LABEL_WRONG: {'color': [0, 0, 0]},
+    '0': {'color': [255, 0, 0]},
+    '1': {'color': [0, 255, 0]},
+    '2': {'color': [0, 0, 255]},
+}
 
 def sam_model_version(sam_checkpoint_filepath):
     if 'sam_vit_b' in sam_checkpoint_filepath:
@@ -58,6 +68,7 @@ app.layout = dbc.Container(
                     html.H1(children='Title of Dash App', style={'textAlign':'center'}),
                     dcc.Dropdown(TIF_FILEPATHS, TIF_FILEPATHS[0], id='image-filepath'),
                     dcc.Dropdown(SAM_CHECKPOINT_FILEPATHS, SAM_CHECKPOINT_FILEPATHS[0], id='sam-checkpoint-filepath'),
+                    dcc.Dropdown(list(LABELS.keys()), '0', id='active-label'),
                     dcc.RadioItems(DISPLAY_OPTIONS, DISPLAY_IMAGE, id='display-option'),
                     html.Button('Run SAM', id='run-sam-button', n_clicks=0),
                     html.Div(id='clicked-pixel-coords'),
@@ -68,7 +79,7 @@ app.layout = dbc.Container(
         dbc.Row(
             [
                 dbc.Col(dcc.Graph(id='canvas'), width=6),
-                dbc.Col(html.Div(id='selected-mask'), width=4)
+                dbc.Col(id='selected-masks', width=4)
             ],
             justify='between'
         ),
@@ -123,13 +134,45 @@ def ndarray_to_b64(ndarray):
     _, buffer = cv2.imencode('.png', img)
     return base64.b64encode(buffer).decode('utf-8')
 
+def generate_crop_with_radio(crop, labels, label, index):
+    _, crop_png = cv2.imencode('.png', crop)
+    crop_base64 = base64.b64encode(crop_png).decode('utf-8')
+    crop_html = html.Img(src=f"data:image/png;base64,{crop_base64}", style={'display': 'block', 'margin-bottom': '10px'}, className="img-item")
+    return dbc.Form(
+        [
+            dbc.Row(
+                [
+                    dbc.Col(crop_html),
+                    dbc.Col(
+                        dbc.RadioItems(
+                            options=labels,
+                            value=label,
+                            id=f"radio-item-{index}",
+                            inline=False,
+                            className="ml-3"
+                        )
+                    )
+                ],
+                className="img-container",
+                style={"margin-bottom": "5px"}
+            ),
+            dbc.Row(dbc.Col(html.Hr(style={"margin-top": "10px", "margin-bottom": "20px"})))
+        ],
+    )
+
 @callback(
     Output('clicked-pixel-coords', 'children'),
-    Output('selected-mask', 'children'),
+    Output('selected-masks', 'children'),
     Input('canvas', 'clickData'),
-    State('image-filepath', 'value'),
+    Input('image-filepath', 'value'),
+    State('active-label', 'value')
 )
-def handle_click(click_data, image_filepath):
+def handle_click(click_data, image_filepath, active_label):
+    if ctx.triggered_id == 'image-filepath':
+        return [], []
+
+    if ctx.triggered_id == 'active-label':
+        raise PreventUpdate
     if not click_data:
         raise PreventUpdate
 
@@ -141,15 +184,18 @@ def handle_click(click_data, image_filepath):
     crops = []
     for mask in masks:
         if is_point_in_mask(x, y, mask):
-            crop = get_masked_crop(image, mask)
-            _, crop_png = cv2.imencode('.png', crop)
-            crop_base64 = base64.b64encode(crop_png).decode('utf-8')
-            crop_html = html.Img(src=f"data:image/png;base64,{crop_base64}", style={'display': 'block', 'margin-bottom': '10px'})
-            crops.append(crop_html)
+            label = active_label if len(crops) == 0 else LABEL_WRONG
+            crops.append((get_masked_crop(image, mask), label))
+            mask['label'] = label
+    
+    labels = list(LABELS.keys())
 
-    print(len(crops))
+    image_radio_items = []
+    for i, (crop, label) in enumerate(crops):
+        image_radio_item = generate_crop_with_radio(crop, labels, label, i)
+        image_radio_items.append(image_radio_item)
 
-    return html.H3('x: {}, y: {}'.format(x, y)), html.Div(crops)
+    return html.H3('x: {}, y: {}'.format(x, y)), image_radio_items
 
 
 @callback(
@@ -162,13 +208,12 @@ def handle_display_option_change(display_option, figure):
     if not figure:
         raise PreventUpdate
  
-    print('updating display')
+    # Assuming that data[0] is image layer and data[1] is masks layer (see
+    # `update_graph`).
     if display_option == DISPLAY_IMAGE:
         figure['data'][1].update(opacity=0.0)
-        print('updating to 0.0')
     if display_option == DISPLAY_MASKS:
         figure['data'][1].update(opacity=0.3)
-        print('updating to 0.3')
 
     return figure
 
