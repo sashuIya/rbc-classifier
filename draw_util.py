@@ -8,7 +8,7 @@ def get_masks_img(masks, image):
         (x, y, w, h) = mask['bbox']
         x, y, w, h = int(x), int(y), int(w), int(h)
         segmentation = mask['segmentation']
-        color_mask = np.concatenate([np.random.random(3), [0.35]])
+        color_mask = mask['color'] if 'color' in mask else np.concatenate([np.random.random(3), [0.35]])
         masks_img[y : y + h + 1, x : x + w + 1][segmentation] = color_mask
 
     return masks_img
