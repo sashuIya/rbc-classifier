@@ -1,6 +1,7 @@
-from dash import Dash, html, dcc, callback, Output, Input, State, ctx
+from dash import Dash, html, dcc, callback, Output, Input, State, ctx, register_page
 from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
+from dash_util import id_factory
 
 import plotly.express as px
 import plotly.graph_objects as go
@@ -25,7 +26,6 @@ from filepath_util import (
 from mask_util import is_point_in_mask
 
 IMAGES_PATH = os.path.normpath("./dataset/")
-SAM_CHECKPOINTS_FOLDER = os.path.normpath("./model/sam/")
 
 DISPLAY_IMAGE = "Image"
 DISPLAY_MASKS = "Masks"
@@ -48,50 +48,44 @@ LABELS = {
     "2": {"color": [0, 0, 255, 0.35]},
 }
 
-app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+id = id_factory("label-cells")
+register_page(__name__, order=2)
 
+# app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 
 TIF_FILEPATHS = get_rel_filepaths_from_subfolders(
     folder_path=IMAGES_PATH, extension="tif"
 )
-SAM_CHECKPOINT_FILEPATHS = get_rel_filepaths_from_subfolders(
-    folder_path=SAM_CHECKPOINTS_FOLDER, extension="pth"
-)
-
-app.layout = dbc.Container(
+layout = dbc.Container(
     [
         dbc.Row(
             dbc.Col(
                 [
                     html.H1(
-                        children="Title of Dash App", style={"textAlign": "center"}
+                        children="Labeling tool", style={"textAlign": "center"}
                     ),
-                    dcc.Dropdown(TIF_FILEPATHS, TIF_FILEPATHS[0], id="image-filepath"),
                     dcc.Dropdown(
-                        SAM_CHECKPOINT_FILEPATHS,
-                        SAM_CHECKPOINT_FILEPATHS[0],
-                        id="sam-checkpoint-filepath",
+                        TIF_FILEPATHS, TIF_FILEPATHS[0], id=id("image-filepath")
                     ),
                     dcc.RadioItems(
-                        DISPLAY_OPTIONS, DISPLAY_LABELED_DATA, id="display-options"
+                        DISPLAY_OPTIONS, DISPLAY_LABELED_DATA, id=id("display-options")
                     ),
-                    html.Button("Run SAM", id="run-sam-button", n_clicks=0),
-                    html.Div(id="clicked-pixel-coords"),
+                    html.Div(id=id("clicked-pixel-coords")),
                     html.Div(style={"padding": "20px"}),
-                    dcc.RadioItems(list(LABELS.keys()), "0", id="active-label"),
+                    dcc.RadioItems(list(LABELS.keys()), "0", id=id("active-label")),
                 ],
                 # width=22,
             )
         ),
         dbc.Row(
             [
-                dbc.Col(dcc.Graph(id="canvas")),
-                dbc.Col(id="selected-masks"),
+                dbc.Col(dcc.Graph(id=id("canvas"))),
+                dbc.Col(id=id("selected-masks")),
             ],
             justify="between",
         ),
-        dcc.Store(id="labeled-masks"),
-        dcc.Store(id="figure-store"),
+        dcc.Store(id=id("labeled-masks")),
+        dcc.Store(id=id("figure-store")),
     ],
     fluid=True,
 )
@@ -129,7 +123,7 @@ def generate_crop_with_radio(crop, labels, label, index):
                         dbc.RadioItems(
                             options=labels,
                             value=label,
-                            id=f"radio-item-{index}",
+                            id=id(f"radio-item-{index}"),
                             inline=False,
                             className="ml-3",
                         )
@@ -146,17 +140,19 @@ def generate_crop_with_radio(crop, labels, label, index):
 
 
 @callback(
-    Output("canvas", "figure", allow_duplicate=True),
-    Input("labeled-masks", "data"),
-    Input("display-options", "value"),
-    State("image-filepath", "value"),
+    Output(id("canvas"), "figure", allow_duplicate=True),
+    Input(id("labeled-masks"), "data"),
+    Input(id("display-options"), "value"),
+    State(id("image-filepath"), "value"),
     prevent_initial_call=True,
 )
 def handle_labels_change(labeled_masks, display_option, image_filepath):
     if display_option != DISPLAY_LABELED_DATA:
         raise PreventUpdate
 
-    if ctx.triggered_id != "labeled-masks" and ctx.triggered_id != "display-options":
+    if ctx.triggered_id != id("labeled-masks") and ctx.triggered_id != id(
+        "display-options"
+    ):
         raise PreventUpdate
 
     labeled_masks = pd.DataFrame(labeled_masks)
@@ -186,22 +182,22 @@ def handle_labels_change(labeled_masks, display_option, image_filepath):
 
 
 @callback(
-    Output("clicked-pixel-coords", "children"),
-    Output("selected-masks", "children"),
-    Output("labeled-masks", "data", allow_duplicate=True),
-    Input("canvas", "clickData"),
-    State("active-label", "value"),
-    State("labeled-masks", "data"),
-    State("image-filepath", "value"),
+    Output(id("clicked-pixel-coords"), "children"),
+    Output(id("selected-masks"), "children"),
+    Output(id("labeled-masks"), "data", allow_duplicate=True),
+    Input(id("canvas"), "clickData"),
+    State(id("active-label"), "value"),
+    State(id("labeled-masks"), "data"),
+    State(id("image-filepath"), "value"),
     prevent_initial_call=True,
 )
 def handle_canvas_click(
     click_data, active_label: str, labeled_masks: dict, image_filepath: str
 ):
-    if ctx.triggered_id == "image-filepath":
+    if ctx.triggered_id == id("image-filepath"):
         return [], [], labeled_masks
 
-    if ctx.triggered_id == "active-label":
+    if ctx.triggered_id == id("active-label"):
         raise PreventUpdate
     if not click_data:
         raise PreventUpdate
@@ -239,30 +235,30 @@ def handle_canvas_click(
     )
 
 
-# @callback(
-#     Output('canvas', 'figure', allow_duplicate=True),
-#     Input('display-options', 'value'),
-#     Input('canvas', 'figure'),
-#     prevent_initial_call=True
-# )
-# def handle_display_option_change(display_option, figure):
-#     if not figure:
-#         raise PreventUpdate
+@callback(
+    Output(id("canvas"), "figure", allow_duplicate=True),
+    Input(id("display-options"), "value"),
+    Input(id("canvas"), "figure"),
+    prevent_initial_call=True,
+)
+def handle_display_option_change(display_option, figure):
+    if not figure:
+        raise PreventUpdate
 
-#     # Assuming that data[0] is image layer and data[1] is masks layer (see
-#     # `update_graph`).
-#     if display_option == DISPLAY_IMAGE:
-#         figure['data'][1].update(opacity=0.0)
-#     if display_option == DISPLAY_MASKS:
-#         figure['data'][1].update(opacity=0.3)
+    # Assuming that data[0] is image layer and data[1] is masks layer (see
+    # `update_graph`).
+    if display_option == DISPLAY_IMAGE:
+        figure["data"][1].update(opacity=0.0)
+    if display_option == DISPLAY_MASKS:
+        figure["data"][1].update(opacity=0.3)
 
-#     return figure
+    return figure
 
 
 @callback(
-    Output("canvas", "figure"),
-    Output("labeled-masks", "data"),
-    Input("image-filepath", "value"),
+    Output(id("canvas"), "figure"),
+    Output(id("labeled-masks"), "data"),
+    Input(id("image-filepath"), "value"),
 )
 def handle_image_filepath_selection(image_filepath):
     if not image_filepath:
@@ -295,7 +291,3 @@ def handle_image_filepath_selection(image_filepath):
 
     print("read masks", len(labeled_masks))
     return image_fig, labeled_masks.to_dict()
-
-
-if __name__ == "__main__":
-    app.run(debug=True)
