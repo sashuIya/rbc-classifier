@@ -14,17 +14,28 @@ import pandas as pd
 import numpy as np
 import cv2
 
+from sklearn.cluster import KMeans
+
 from draw_util import get_masks_img, get_masked_crop, draw_height_and_scale
 from filepath_util import (
     read_masks_for_image,
     read_image,
     get_rel_filepaths_from_subfolders,
-    write_labels,
-    read_labels_for_image,
-    get_labels_filepath,
     read_images_metadata,
+    write_masks_features,
 )
-from mask_util import is_point_in_mask, run_sam, save_masks
+from mask_util import (
+    is_point_in_mask,
+    run_sam,
+    save_masks,
+    compute_resnet_features,
+    compute_measure_features,
+    construct_features_dataframe,
+)
+
+import warnings
+
+warnings.simplefilter(action="ignore", category=FutureWarning)
 
 METADATA_DF = read_images_metadata()
 SAM_CHECKPOINTS_FOLDER = os.path.normpath("./model/sam/")
@@ -37,6 +48,8 @@ SAM_CHECKPOINT_FILEPATHS = get_rel_filepaths_from_subfolders(
 
 HEIGHT_FULL = "full"
 HEIGHT_VALUES = [HEIGHT_FULL, 1024, 2048]
+
+USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION = "Use mesh size for masks file suffix"
 
 id = id_factory("execute_sam")
 register_page(__name__, order=1)
@@ -65,6 +78,11 @@ layout = dbc.Container(
                     html.Div("Image height without scaling:", id=id("image-height")),
                     html.Div(style={"padding": "20px"}),
                     html.Button("Run SAM", id=id("run-sam-button"), n_clicks=0),
+                    dcc.Checklist(
+                        [USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION],
+                        value=[USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION],
+                        id=id("grid-size-as-suffix"),
+                    ),
                     html.Button(
                         "Compute and save features",
                         id=id("compute-features-button"),
@@ -136,6 +154,21 @@ def handle_image_filepath_selection(image_filepath, grid_size):
     return ["Image height without scaling: {}".format(height)], image_fig
 
 
+def figure_widget_for_image_and_masks(image, masks):
+    image_and_masks_fig = go.FigureWidget()
+    image_and_masks_fig.update_layout(autosize=False, width=1024, height=1024)
+
+    img_trace = px.imshow(image).data[0]
+    image_and_masks_fig.add_trace(img_trace)
+
+    masks_image = get_masks_img(masks, image)[:, :, :3]
+    masks_trace = px.imshow(masks_image).data[0]
+    image_and_masks_fig.add_trace(masks_trace)
+    image_and_masks_fig.data[1].update(opacity=0.35)
+
+    return image_and_masks_fig
+
+
 @callback(
     Output(id("masks-preview"), "figure"),
     Output(id("loading-sam-output"), "children"),
@@ -144,6 +177,7 @@ def handle_image_filepath_selection(image_filepath, grid_size):
     State(id("sam-checkpoint-filepath"), "value"),
     State(id("grid-size"), "value"),
     State(id("crop-n-layers"), "value"),
+    State(id("grid-size-as-suffix"), "value"),
 )
 def handle_run_sam_button_click(
     n_clicks,
@@ -151,6 +185,7 @@ def handle_run_sam_button_click(
     sam_checkpoint_filepath,
     points_per_side,
     crop_n_layers,
+    points_per_side_as_suffix: list,
 ):
     if ctx.triggered_id != id("run-sam-button"):
         raise PreventUpdate
@@ -166,20 +201,13 @@ def handle_run_sam_button_click(
         crop_n_layers=crop_n_layers,
         points_per_side=points_per_side,
     )
-    save_masks(masks, image_filepath, suffix=suffix_for_masks_file(points_per_side))
 
-    image_fig = go.FigureWidget()
-    image_fig.update_layout(autosize=False, width=1024, height=1024)
+    suffix = ""
+    if USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION in points_per_side_as_suffix:
+        suffix = suffix_for_masks_file(points_per_side)
+    save_masks(masks, image_filepath, suffix=suffix)
 
-    img_trace = px.imshow(image).data[0]
-    image_fig.add_trace(img_trace)
-
-    masks_image = get_masks_img(masks, image)[:, :, :3]
-    masks_trace = px.imshow(masks_image).data[0]
-    image_fig.add_trace(masks_trace)
-    image_fig.data[1].update(opacity=0.35)
-
-    return image_fig, {}
+    return figure_widget_for_image_and_masks(image, masks), {}
 
 
 @callback(
@@ -187,17 +215,30 @@ def handle_run_sam_button_click(
     Input(id("compute-features-button"), "n_clicks"),
     State(id("image-filepath"), "value"),
     State(id("grid-size"), "value"),
+    State(id("grid-size-as-suffix"), "value"),
+    prevent_initial_call=True,
 )
-def handle_compute_features_button_click(n_clicks, image_filepath, points_per_side):
-    if not n_clicks:
+def handle_compute_features_button_click(
+    n_clicks, image_filepath, points_per_side, points_per_side_as_suffix: list
+):
+    if not n_clicks or not image_filepath:
         raise PreventUpdate
 
-    masks = read_masks_for_image(
-        image_filepath, suffix=suffix_for_masks_file(points_per_side)
+    suffix = ""
+    if USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION in points_per_side_as_suffix:
+        suffix = suffix_for_masks_file(points_per_side)
+
+    image = read_image(image_filepath)
+    masks = read_masks_for_image(image_filepath, suffix=suffix)
+
+    resnet_features, resnet_columns = compute_resnet_features(masks, image)
+    measure_features, measure_columns = compute_measure_features(masks, image_filepath)
+
+    all_features = np.concatenate([resnet_features, measure_features], axis=1)
+    all_columns = resnet_columns + measure_columns
+    features_df = construct_features_dataframe(
+        image_filepath, masks, all_features, all_columns
     )
+    write_masks_features(features_df, image_filepath, suffix=suffix)
 
-    metadata = read_images_metadata()
-
-    # resnet = ResnetModel()
-    # for mask in masks:
-    #     resnet_features = 
+    return {}

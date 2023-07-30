@@ -19,11 +19,30 @@ from filepath_util import (
     read_masks_for_image,
     read_image,
     get_rel_filepaths_from_subfolders,
-    write_labels,
-    read_labels_for_image,
-    get_labels_filepath,
+    get_masks_features_filepath,
+    read_masks_features,
+    write_masks_features,
+    get_classifier_model_filepaths,
 )
 from mask_util import is_point_in_mask
+from train_classifier import (
+    train_pipeline,
+    classify,
+)
+
+from consts import (
+    # Features metadata
+    Y_COLUMN,
+    MASK_ID_COLUMN,
+    # Labeling modes
+    LABELING_MODE_COLUMN,
+    LABELING_MANUAL,
+    LABELING_APPROVED,
+    LABELING_AUTO,
+    # Labels (options of Y_COLUMN)
+    LABEL_UNLABELED,
+    LABEL_WRONG,
+)
 
 IMAGES_PATH = os.path.normpath("./dataset/")
 
@@ -38,8 +57,6 @@ DISPLAY_OPTIONS = [
     DISPLAY_UNLABELED_DATA,
 ]
 
-LABEL_UNLABELED = "unlabeled"
-LABEL_WRONG = "wrong"
 LABELS = {
     LABEL_UNLABELED: {"color": [255, 255, 255]},
     LABEL_WRONG: {"color": [0, 0, 0]},
@@ -56,16 +73,34 @@ register_page(__name__, order=2)
 TIF_FILEPATHS = get_rel_filepaths_from_subfolders(
     folder_path=IMAGES_PATH, extension="tif"
 )
+
+CLASSIFIER_MODEL_FILEPATHS = get_classifier_model_filepaths()
+if not CLASSIFIER_MODEL_FILEPATHS:
+    CLASSIFIER_MODEL_FILEPATHS = ["none"]
+
 layout = dbc.Container(
     [
         dbc.Row(
             dbc.Col(
                 [
-                    html.H1(
-                        children="Labeling tool", style={"textAlign": "center"}
-                    ),
+                    html.H1(children="Labeling tool", style={"textAlign": "center"}),
                     dcc.Dropdown(
                         TIF_FILEPATHS, TIF_FILEPATHS[0], id=id("image-filepath")
+                    ),
+                    dcc.Dropdown(
+                        CLASSIFIER_MODEL_FILEPATHS,
+                        CLASSIFIER_MODEL_FILEPATHS[0],
+                        id=id("classifier-model"),
+                    ),
+                    html.Button(
+                        "Train classifier on labeled data",
+                        id=id("train-classifier-button"),
+                        n_clicks=0,
+                    ),
+                    html.Button(
+                        "Run classifier",
+                        id=id("run-classifier-button"),
+                        n_clicks=0,
                     ),
                     dcc.RadioItems(
                         DISPLAY_OPTIONS, DISPLAY_LABELED_DATA, id=id("display-options")
@@ -150,11 +185,6 @@ def handle_labels_change(labeled_masks, display_option, image_filepath):
     if display_option != DISPLAY_LABELED_DATA:
         raise PreventUpdate
 
-    if ctx.triggered_id != id("labeled-masks") and ctx.triggered_id != id(
-        "display-options"
-    ):
-        raise PreventUpdate
-
     labeled_masks = pd.DataFrame(labeled_masks)
     fig = go.FigureWidget()
     fig.update_layout(autosize=False, width=1024, height=1024)
@@ -167,10 +197,12 @@ def handle_labels_change(labeled_masks, display_option, image_filepath):
     masks_to_display = []
     for mask in masks:
         mask_id = mask["id"]
-        label = labeled_masks.loc[labeled_masks["id"] == mask_id, "label"].values[0]
-        mask["color"] = LABELS[label]["color"]
+        label = labeled_masks.loc[
+            labeled_masks[MASK_ID_COLUMN] == mask_id, Y_COLUMN
+        ].values[0]
         if label in [LABEL_UNLABELED, LABEL_WRONG]:
             continue
+        mask["color"] = LABELS[label]["color"]
         masks_to_display.append(mask)
 
     masks_image = get_masks_img(masks_to_display, image)[:, :, :3]
@@ -194,11 +226,6 @@ def handle_labels_change(labeled_masks, display_option, image_filepath):
 def handle_canvas_click(
     click_data, active_label: str, labeled_masks: dict, image_filepath: str
 ):
-    if ctx.triggered_id == id("image-filepath"):
-        return [], [], labeled_masks
-
-    if ctx.triggered_id == id("active-label"):
-        raise PreventUpdate
     if not click_data:
         raise PreventUpdate
 
@@ -209,6 +236,9 @@ def handle_canvas_click(
 
     image = read_image(image_filepath)
     masks = read_masks_for_image(image_filepath)
+
+    assert len(masks) == labeled_masks.shape[0]
+
     crops = []
     for mask in masks:
         mask_id = mask["id"]
@@ -216,10 +246,18 @@ def handle_canvas_click(
             label = active_label if len(crops) == 0 else LABEL_WRONG
             crops.append((get_masked_crop(image, mask), label))
             labeled_masks.loc[
-                labeled_masks["id"] == mask_id, ["label", "manually_labeled"]
-            ] = (label, True)
+                labeled_masks[MASK_ID_COLUMN] == mask_id,
+                [Y_COLUMN, LABELING_MODE_COLUMN],
+            ] = (label, LABELING_MANUAL)
 
-    write_labels(image_filepath, labeled_masks)
+    labeled_masks.loc[
+        (labeled_masks[Y_COLUMN] != LABEL_UNLABELED) &
+        (labeled_masks[Y_COLUMN] != LABEL_WRONG)
+        & (labeled_masks[LABELING_MODE_COLUMN] == LABELING_AUTO),
+        LABELING_MODE_COLUMN,
+    ] = LABELING_APPROVED
+
+    write_masks_features(labeled_masks, image_filepath)
 
     labels = list(LABELS.keys())
 
@@ -280,14 +318,54 @@ def handle_image_filepath_selection(image_filepath):
     image_fig.add_trace(px.imshow(image).data[0])
     image_fig.data[2].update(opacity=0.0)
 
-    labeled_masks = read_labels_for_image(image_filepath)
-    print(labeled_masks.head())
+    labeled_masks = read_masks_features(image_filepath)
+    print("read labeled_masks, shape", labeled_masks.shape)
 
     assert len(masks) == len(labeled_masks), (
         "Labels do not correspond to the masks."
         "Probably you updated the masks."
-        "Consider removing {}".format(get_labels_filepath(image_filepath))
+        "Consider removing {}".format(get_masks_features_filepath(image_filepath))
     )
 
-    print("read masks", len(labeled_masks))
     return image_fig, labeled_masks.to_dict()
+
+
+@callback(
+    Output(id("classifier-model"), "options"),
+    Output(id("classifier-model"), "value"),
+    Input(id("train-classifier-button"), "n_clicks"),
+)
+def handle_train_classifier_button(n_clicks):
+    if n_clicks == 0:
+        raise PreventUpdate
+
+    train_pipeline()
+    model_filepaths = get_classifier_model_filepaths()
+    if not model_filepaths:
+        return ["none"], "none"
+
+    return model_filepaths, model_filepaths[0]
+
+
+@callback(
+    Output(id("labeled-masks"), "data", allow_duplicate=True),
+    Input(id("run-classifier-button"), "n_clicks"),
+    State(id("classifier-model"), "value"),
+    State(id("image-filepath"), "value"),
+    prevent_initial_call=True,
+)
+def handle_run_classifier_button(n_clicks, classifier_model_filepath, image_filepath):
+    if not n_clicks or not image_filepath or not classifier_model_filepath:
+        raise PreventUpdate
+
+    labeled_masks = read_masks_features(image_filepath)
+    predictions = classify(
+        labeled_masks[labeled_masks[Y_COLUMN] == LABEL_UNLABELED],
+        classifier_model_filepath,
+    )
+
+    labeled_masks.loc[
+        labeled_masks[Y_COLUMN] == LABEL_UNLABELED, Y_COLUMN
+    ] = predictions
+
+    return labeled_masks.to_dict()

@@ -1,30 +1,26 @@
 from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
 import pickle
 import os
+import numpy as np
+import pandas as pd
+from tqdm import tqdm
+
 import torch
 import torchvision.transforms as transforms
-from torchvision.models import resnet50
+from torch.utils.data import Dataset, DataLoader
+from torchvision.models import resnet50, ResNet50_Weights
 
-DEVICE = "cuda"
-
-# Define the transformation to apply to the image and mask
-preprocess = transforms.Compose(
-    [
-        transforms.ToPILImage(),
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ]
+from consts import (
+    LABEL_UNLABELED,
+    LABELING_AUTO,
+    LABELING_MODE_COLUMN,
+    MASK_ID_COLUMN,
 )
 
-# Load the pre-trained ResNet model
-resnet_model = resnet50(pretrained=True)
+from filepath_util import read_images_metadata
 
-# Remove the classification layer from the model
-features_extractor_model = torch.nn.Sequential(*list(resnet_model.children())[:-1])
-
-# Set the model to evaluation mode
-features_extractor_model.eval()
+DEVICE = "cuda"
+RESNET_BATCH_SIZE = 64
 
 
 def is_point_in_mask(px, py, mask):
@@ -88,22 +84,130 @@ def run_sam(image, sam_checkpoint_filepath, crop_n_layers, points_per_side):
     return masks
 
 
-def get_mask_resnet_features(mask, image, model):
-    bbox = [int(x) for x in mask["bbox"]]
-    roi = image[bbox[1] : bbox[1] + bbox[3] + 1, bbox[0] : bbox[0] + bbox[2] + 1]
-    masked_roi = roi * mask["segmentation"][:, :, np.newaxis]
+class CropsDataset(Dataset):
+    def __init__(self, image, masks, transform):
+        self.image = image
+        self.masks = masks
+        self.transform = transform
 
-    # Preprocess the image and mask
-    preprocessed_roi = preprocess(masked_roi)
+    def __len__(self):
+        return len(self.masks)
 
-    # Expand the dimensions to match the input shape expected by ResNet
-    preprocessed_roi = preprocessed_roi.unsqueeze(0)
+    def __getitem__(self, idx):
+        mask = self.masks[idx]
+        bbox = [int(x) for x in mask["bbox"]]
+        roi = self.image[
+            bbox[1] : bbox[1] + bbox[3] + 1, bbox[0] : bbox[0] + bbox[2] + 1
+        ]
+        masked_roi = roi * mask["segmentation"][:, :, np.newaxis]
 
-    # Pass the preprocessed ROI through the model to obtain features
-    with torch.no_grad():
-        resnet_features = model(preprocessed_roi)
+        # Preprocess crop
+        preprocessed_roi = self.transform(masked_roi)
 
-    # Flatten the feature tensor to obtain a feature vector
-    feature_vector = resnet_features.view(resnet_features.size(0), -1).squeeze()
+        return preprocessed_roi
 
-    return feature_vector.detach().cpu().numpy()
+
+def compute_resnet_features(masks: dict, image: np.ndarray):
+    """Computes resnet features for each mask and returns a pair of
+    * np.ndarray of shape (n_masks, n_features)
+    * column names (to construct a DataFrame)
+    """
+    if DEVICE == "cuda":
+        torch.cuda.empty_cache()
+
+    # Define the transformation to apply to the image and mask
+    preprocess_transform = transforms.Compose(
+        [
+            transforms.ToPILImage(),
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ]
+    )
+
+    # Load the pre-trained ResNet model
+    resnet_model = resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
+
+    # Remove the classification layer from the model
+    features_extractor_model = torch.nn.Sequential(*list(resnet_model.children())[:-1])
+    features_extractor_model.to(DEVICE)
+
+    # Set the model to evaluation mode
+    features_extractor_model.eval()
+
+    crops_dataset = CropsDataset(image, masks, preprocess_transform)
+    dataloader = DataLoader(crops_dataset, batch_size=RESNET_BATCH_SIZE, shuffle=False)
+    outputs_list = []
+    for batch in tqdm(
+        dataloader, desc="Computing resnet features for {} crops".format(len(masks))
+    ):
+        batch = batch.to(DEVICE)
+        # batch = batch.unsqueeze(0).to(DEVICE)
+
+        with torch.no_grad():
+            batch_resnet_features = features_extractor_model(batch)
+
+        batch_resnet_features = batch_resnet_features.squeeze(0).squeeze(-1).squeeze(-1)
+
+        outputs_list.append(batch_resnet_features.squeeze(0).cpu().numpy())
+
+    all_outputs = np.concatenate(outputs_list, axis=0)
+
+    assert all_outputs.shape == (len(masks), 2048)
+
+    columns = ["x_resnet_{}".format(i) for i in range(2048)]
+
+    return all_outputs, columns
+
+
+def compute_measure_features(masks, image_filepath):
+    """Computes measurement features of the masks. E.g., width and height
+    of the bounding box in micrometers. Also returns column names (to
+    construct a DataFrame).
+    """
+    metadata = read_images_metadata()
+    micrometers, scale_x0, scale_x1 = metadata.loc[
+        metadata["filepath"] == image_filepath, ["micrometers", "scale_x0", "scale_x1"]
+    ].values[0]
+
+    print(micrometers, scale_x0, scale_x1)
+
+    scale = micrometers / abs(scale_x1 - scale_x0)
+
+    metrics = np.zeros((len(masks), 2))
+    for i, mask in enumerate(masks):
+        w, h = mask["bbox"][2:4]
+        metrics[i][0], metrics[i][1] = w * scale, h * scale
+
+    return metrics, ["x_w_micrometers", "x_h_micrometers"]
+
+
+def construct_features_dataframe(
+    image_filepath: str, masks: dict, features: np.ndarray, feature_columns: list
+):
+    assert features.shape == (len(masks), len(feature_columns))
+    features_df = pd.DataFrame(features, columns=feature_columns)
+
+    metadata_df_columns = [
+        "image_filepath",
+        MASK_ID_COLUMN,
+        "mask_area_px",
+        LABELING_MODE_COLUMN,
+        "y",
+    ]
+    metadata = []
+    for mask in masks:
+        metadata.append(
+            [
+                image_filepath,
+                mask["id"],
+                mask["area"],
+                LABELING_AUTO,
+                LABEL_UNLABELED,
+            ]
+        )
+        assert len(metadata[-1]) == len(metadata_df_columns)
+
+    metadata_df = pd.DataFrame(metadata, columns=metadata_df_columns)
+
+    return pd.concat([metadata_df, features_df], axis=1)
