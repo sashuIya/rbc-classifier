@@ -102,11 +102,6 @@ layout = dbc.Container(
                         id=id("run-classifier-button"),
                         n_clicks=0,
                     ),
-                    html.Button(
-                        "Save masks",
-                        id=id("save-labels-button"),
-                        n_clicks=0,
-                    ),
                     dcc.RadioItems(
                         DISPLAY_OPTIONS, DISPLAY_LABELED_DATA, id=id("display-options")
                     ),
@@ -190,17 +185,8 @@ def handle_labels_change(labeled_masks, display_option, image_filepath):
     if display_option != DISPLAY_LABELED_DATA:
         raise PreventUpdate
 
-    if not labeled_masks:
-        raise PreventUpdate
-
-    print("Masks or display-option has changed")
-
     labeled_masks = pd.DataFrame(labeled_masks)
-
-    print(labeled_masks.shape)
-    print(labeled_masks.head())
-
-    fig = go.Figure()
+    fig = go.FigureWidget()
     fig.update_layout(autosize=False, width=1024, height=1024)
 
     image = read_image(image_filepath)
@@ -264,6 +250,15 @@ def handle_canvas_click(
                 [Y_COLUMN, LABELING_MODE_COLUMN],
             ] = (label, LABELING_MANUAL)
 
+    labeled_masks.loc[
+        (labeled_masks[Y_COLUMN] != LABEL_UNLABELED) &
+        (labeled_masks[Y_COLUMN] != LABEL_WRONG)
+        & (labeled_masks[LABELING_MODE_COLUMN] == LABELING_AUTO),
+        LABELING_MODE_COLUMN,
+    ] = LABELING_APPROVED
+
+    write_masks_features(labeled_masks, image_filepath)
+
     labels = list(LABELS.keys())
 
     image_radio_items = []
@@ -277,33 +272,6 @@ def handle_canvas_click(
         labeled_masks.to_dict(),
     )
 
-
-@callback(
-    Output(id("save-labels-button"), "style"),
-    Input(id("save-labels-button"), "n_clicks"),
-    State(id("labeled-masks"), "data"),
-    State(id("image-filepath"), "value"),
-)
-def handle_save_labels_button_click(n_clicks, labeled_masks, image_filepath):
-    if n_clicks == 0 or not labeled_masks:
-        raise PreventUpdate
-
-    labeled_masks = pd.DataFrame(labeled_masks)
-
-    labeled_masks.loc[
-        (labeled_masks[Y_COLUMN] != LABEL_UNLABELED)
-        # & (labeled_masks[Y_COLUMN] != LABEL_WRONG)
-        & (labeled_masks[LABELING_MODE_COLUMN] == LABELING_AUTO),
-        LABELING_MODE_COLUMN,
-    ] = LABELING_APPROVED
-
-    masks_features = read_masks_features(image_filepath)
-    labeled_masks.index = masks_features.index
-    masks_features[labeled_masks.columns] = labeled_masks
-
-    write_masks_features(masks_features, image_filepath)
-
-    return {}
 
 @callback(
     Output(id("canvas"), "figure", allow_duplicate=True),
@@ -334,9 +302,7 @@ def handle_image_filepath_selection(image_filepath):
     if not image_filepath:
         return {}, {}, {}
 
-    print('Image filepath changed')
-
-    image_fig = go.Figure()
+    image_fig = go.FigureWidget()
     image_fig.update_layout(autosize=False, width=1024, height=1024)
 
     image = read_image(image_filepath)
@@ -354,15 +320,12 @@ def handle_image_filepath_selection(image_filepath):
 
     labeled_masks = read_masks_features(image_filepath)
     print("read labeled_masks, shape", labeled_masks.shape)
-    print(labeled_masks[[MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN]].head())
 
-    assert len(masks) == labeled_masks.shape[0], (
+    assert len(masks) == len(labeled_masks), (
         "Labels do not correspond to the masks."
         "Probably you updated the masks."
         "Consider removing {}".format(get_masks_features_filepath(image_filepath))
     )
-
-    labeled_masks = labeled_masks[[MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN]]
 
     return image_fig, labeled_masks.to_dict()
 
