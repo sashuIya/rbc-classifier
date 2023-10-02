@@ -12,6 +12,7 @@ from consts import (
     LABELING_MANUAL,
     LABELING_APPROVED,
 )
+import faiss
 
 METADATA_FILEPATH = os.path.normpath("dataset/images_metadata.csv")
 
@@ -89,25 +90,27 @@ def read_masks_for_image(image_filepath, suffix=""):
     return sorted_masks
 
 
-def write_embedder_and_classifier(embedder_model, classifier_model, label_encoder):
+def write_embedder_and_faiss(embedder_model, faiss_index, labels, label_encoder):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     filename = f"classifier_model_{timestamp}.pth"
     filepath = os.path.join(CLASSIFIER_CHECKPOINT_DIR, filename)
     model_state = {
         "embedder": embedder_model,
-        "classifier": classifier_model,
+        "faiss_index": faiss.serialize_index(faiss_index),
+        "labels": labels,
         "label_encoder": label_encoder,
     }
     torch.save(model_state, filepath)
 
 
-def read_embedder_and_classifier(filepath):
+def read_embedder_and_faiss(filepath):
     loaded_model = torch.load(filepath)
     embedder_model = loaded_model["embedder"]
-    classifier_model = loaded_model["classifier"]
+    faiss_index = faiss.deserialize_index(loaded_model["faiss_index"])
     label_encoder = loaded_model["label_encoder"]
+    labels = loaded_model["labels"]
 
-    return embedder_model, classifier_model, label_encoder
+    return embedder_model, faiss_index, labels, label_encoder
 
 
 def read_features_for_all_images(check_data=False) -> pd.DataFrame:

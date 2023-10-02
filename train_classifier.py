@@ -1,3 +1,8 @@
+import matplotlib
+
+matplotlib.use("Agg")  # 'Agg' backend is suitable for saving figures to files
+import matplotlib.pyplot as plt
+
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
@@ -13,8 +18,8 @@ from pytorch_metric_learning.utils.accuracy_calculator import AccuracyCalculator
 
 from filepath_util import (
     read_masks_features,
-    read_embedder_and_classifier,
-    write_embedder_and_classifier,
+    read_embedder_and_faiss,
+    write_embedder_and_faiss,
     read_labeled_and_reviewed_features_for_all_images,
 )
 
@@ -23,6 +28,11 @@ from sklearn import preprocessing
 from sklearn.svm import SVC
 from sklearn.metrics import accuracy_score
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.manifold import TSNE
+
+import faiss
+
+from scipy.stats import mode
 
 
 from consts import (
@@ -40,35 +50,20 @@ class Embedder(nn.Module):
         super(Embedder, self).__init__()
 
         self.fc = nn.Sequential(
-            nn.Linear(input_size, 512),
-            nn.BatchNorm1d(512),  # Add batch normalization layer
-            nn.Dropout(inplace=True),
-            nn.ReLU(inplace=True),
-            nn.Linear(512, 128),
-            nn.BatchNorm1d(128),  # Add batch normalization layer
-            nn.Dropout(inplace=True),
-            nn.ReLU(inplace=True),
-            nn.Linear(128, 64),
+            nn.Linear(input_size, 1024),
+            # nn.BatchNorm1d(512),  # Add batch normalization layer
+            # nn.Dropout(inplace=True),
+            nn.Mish(),
+            nn.Linear(1024, 512),
+            # nn.BatchNorm1d(128),  # Add batch normalization layer
+            # nn.Dropout(inplace=True),
+            nn.Mish(),
+            nn.Linear(512, 256),
         )
 
     def forward(self, x):
         x = self.fc(x)
         return x
-
-
-class CustomDataset(Dataset):
-    def __init__(self, x_data, y_data):
-        self.x_data = x_data
-        self.y_data = y_data
-
-    def __len__(self):
-        return len(self.x_data)
-
-    def __getitem__(self, idx):
-        x_sample = self.x_data[idx]
-        y_sample = self.y_data[idx]
-
-        return x_sample, y_sample
 
 
 def train_embedder(
@@ -119,15 +114,17 @@ def embed(embedder, data_loader):
     labels_list = []
 
     with torch.no_grad():
-        for features_batch in data_loader:
-            features_batch = features_batch[0].to(DEVICE)
-            embeddings = embedder(features_batch)
+        for features_batch, labels_batch in data_loader:
+            # features_batch = features_batch[0].to(DEVICE)
+            embeddings = embedder(features_batch.to(DEVICE))
             embeddings_list.append(embeddings.cpu().numpy())
+            labels_list.append(labels_batch.numpy())
 
     # Convert the lists to numpy arrays
     embeddings_array = np.concatenate(embeddings_list)
+    labels_array = np.concatenate(labels_list)
 
-    return embeddings_array
+    return embeddings_array, labels_array
 
 
 def get_labels_from_data_loader(data_loader):
@@ -161,7 +158,18 @@ def train_pipeline():
 
     x_train, x_test, y_train, y_test = train_test_split(x, y, random_state=10)
 
+    # Use numpy.unique() to get unique elements and their counts
+    unique_elements, counts = np.unique(labeled_data_df[Y_COLUMN], return_counts=True)
+
+    # Print the unique elements and their counts
+    print("Training classifier on:")
+    for element, count in zip(unique_elements, counts):
+        print(f"    Class {element}: {count} masks")
+
     # Create the dataset and data loader
+    all_dataset = TensorDataset(torch.from_numpy(x).float(), torch.from_numpy(y).int())
+    all_loader = DataLoader(all_dataset, batch_size=BATCH_SIZE, shuffle=False)
+
     train_dataset = TensorDataset(
         torch.from_numpy(x_train).float(), torch.from_numpy(y_train).int()
     )
@@ -177,50 +185,77 @@ def train_pipeline():
 
     # Create the model instance
     embedder = Embedder(x_size, y_size).to(DEVICE)
-    optimizer = optim.Adam(embedder.parameters(), lr=0.00005)
-    loss_func = losses.TripletMarginLoss(margin=1.0)
-    mining_func = miners.TripletMarginMiner(margin=1.0, type_of_triplets="semihard")
+    optimizer = optim.Adam(embedder.parameters(), lr=0.00001)
+    distance = distances.CosineSimilarity()
+    reducer = reducers.ThresholdReducer(low=0)
+    loss_func = losses.TripletMarginLoss(margin=0.2, distance=distance, reducer=reducer)
+    mining_func = miners.TripletMarginMiner(
+        margin=0.2, distance=distance, type_of_triplets="semihard"
+    )
     accuracy_calculator = AccuracyCalculator(include=("precision_at_1",), k=1)
 
-    num_epochs = 1200
+    num_epochs = 300
 
     for epoch in range(1, num_epochs + 1):
         train_embedder(
             embedder, loss_func, mining_func, DEVICE, train_loader, optimizer, epoch
         )
 
-    # test_embedder(train_dataset, val_dataset, embedder, accuracy_calculator)
+    test_embedder(train_dataset, val_dataset, embedder, accuracy_calculator)
 
-    train_embeddings = embed(embedder, train_loader)
-    train_embedding_labels = get_labels_from_data_loader(train_loader)
+    train_embeddings, train_embedding_labels = embed(embedder, train_loader)
 
-    # Train a linear SVM classifier
-    # classifier = SVC(kernel="linear", C=1.0, random_state=42)
-    classifier = KNeighborsClassifier(n_neighbors=8)
-    classifier.fit(train_embeddings, train_embedding_labels)
+    tsne = TSNE(n_components=2, random_state=42)
+    embeddings_2d = tsne.fit_transform(train_embeddings)
+    # Create a scatter plot with different colors for each label
+    plt.figure(figsize=(10, 8))
+    for label in np.unique(train_embedding_labels):
+        plt.scatter(
+            embeddings_2d[train_embedding_labels == label, 0],
+            embeddings_2d[train_embedding_labels == label, 1],
+            label=f"Label {label_encoder.inverse_transform([label])}",
+        )
+    plt.title("t-SNE Visualization of Embeddings")
+    plt.legend()
+
+    # Save the plot as an image
+    plt.savefig("train_embedding_visualization.png")
 
     ## Validate
-    val_embeddings = embed(embedder, val_loader)
-    val_embedding_labels = get_labels_from_data_loader(val_loader)
-    # Use the SVM classifier to predict labels for the validation set
-    val_predicted_labels = classifier.predict(val_embeddings)
-    train_predicted_labels = classifier.predict(train_embeddings)
+    val_embeddings, val_embedding_labels = embed(embedder, val_loader)
 
-    # Calculate accuracy on the validation set
-    train_accuracy = accuracy_score(train_embedding_labels, train_predicted_labels)
-    val_accuracy = accuracy_score(val_embedding_labels, val_predicted_labels)
-    print(
-        f"Train accuracy: {train_accuracy:.4f}\nValidation Accuracy: {val_accuracy:.4f}"
+    tsne = TSNE(n_components=2, random_state=42)
+    embeddings_2d = tsne.fit_transform(val_embeddings)
+    # Create a scatter plot with different colors for each label
+    plt.figure(figsize=(10, 8))
+    for label in np.unique(val_embedding_labels):
+        plt.scatter(
+            embeddings_2d[val_embedding_labels == label, 0],
+            embeddings_2d[val_embedding_labels == label, 1],
+            label=f"Label {label_encoder.inverse_transform([label])}",
+        )
+    plt.title("t-SNE Visualization of Embeddings")
+    plt.legend()
+
+    # Save the plot as an image
+    plt.savefig("val_embedding_visualization.png")
+
+    all_embeddings, all_embedding_labels = embed(embedder, all_loader)
+
+    all_embeddings = all_embeddings / np.linalg.norm(
+        all_embeddings, axis=1, keepdims=True
     )
+    index = faiss.IndexFlatIP(all_embeddings.shape[1])
+    index.add(all_embeddings)
 
-    write_embedder_and_classifier(embedder, classifier, label_encoder)
+    write_embedder_and_faiss(embedder, index, all_embedding_labels, label_encoder)
 
 
 def classify(df, classifier_model_filepath):
     if DEVICE == "cuda":
         torch.cuda.empty_cache()
 
-    embedder, classifier, label_encoder = read_embedder_and_classifier(
+    embedder, faiss_index, faiss_labels, label_encoder = read_embedder_and_faiss(
         classifier_model_filepath
     )
     embedder.to(DEVICE)
@@ -229,8 +264,6 @@ def classify(df, classifier_model_filepath):
 
     x_columns = [x for x in df.columns if x.startswith(X_COLUMN_PREFIX)]
     x = df[x_columns].to_numpy()
-
-    print("Classifying {} masks".format(x.shape[0]))
 
     # Create the dataset and data loader
     dataset = TensorDataset(torch.from_numpy(x).float())
@@ -249,9 +282,28 @@ def classify(df, classifier_model_filepath):
             embeddings_list.append(embeddings.cpu().numpy())
 
     # Convert the lists to numpy arrays
-    embeddings_array = np.concatenate(embeddings_list)
+    embeddings_to_classify = np.concatenate(embeddings_list)
+    embeddings_to_classify = embeddings_to_classify / np.linalg.norm(
+        embeddings_to_classify, axis=1, keepdims=True
+    )
 
-    predicted_labels = classifier.predict(embeddings_array)
+    k = 5
+
+    predicted_labels = []
+
+    for i in range(embeddings_to_classify.shape[0]):
+        query_embedding = embeddings_to_classify[i:i+1]
+
+        # Perform a similarity search to find nearest neighbors
+        distances, indices = faiss_index.search(query_embedding.astype(np.float32), k)
+
+        # Determine the majority label among the neighbors
+        neighbor_labels = faiss_labels[indices[0]]
+        mode_result = mode(neighbor_labels)
+        classified_label = mode_result.mode
+        predicted_labels.append(classified_label)
+
+        print(f"Embedding {i + 1} Classified Label: {classified_label}")
 
     decoded_predicted_labels = label_encoder.inverse_transform(predicted_labels)
 
