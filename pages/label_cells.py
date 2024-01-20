@@ -10,6 +10,7 @@ from dash import (
     ctx,
     register_page,
     MATCH,
+    dash_table,
 )
 from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
@@ -128,6 +129,16 @@ layout = dbc.Container(
                         DISPLAY_OPTIONS, DISPLAY_LABELED_DATA, id=id("display-options")
                     ),
                     html.Div(id=id("clicked-pixel-coords")),
+                    dash_table.DataTable(
+                        id=id("labels-stats"),
+                        columns=[
+                            {"name": "Label", "id": "Label"},
+                            {"name": "Count", "id": "Count"},
+                        ],
+                        data=[{"Label": "X", "Count": "Y"}],
+                        # Set the width of the table
+                        style_table={"width": "10%"},  # Adjust the percentage as needed
+                    ),
                     html.Div(style={"padding": "20px"}),
                     dcc.RadioItems(list(LABELS.keys()), "0", id=id("active-label")),
                 ],
@@ -251,28 +262,29 @@ def update_label(labels, ids, labeled_masks: dict):
 
 @callback(
     Output(id("canvas"), "figure", allow_duplicate=True),
+    Output(id("labels-stats"), "data"),
     Input(id("labeled-masks"), "data"),
     State(id("display-options"), "value"),
     State(id("image-filepath"), "value"),
     prevent_initial_call=True,
 )
-def handle_labels_change(labeled_masks, display_option, image_filepath):
+def handle_labels_change(labeled_masks_dict, display_option, image_filepath):
     if display_option != DISPLAY_LABELED_DATA:
         raise PreventUpdate
 
-    if not labeled_masks:
+    if not labeled_masks_dict:
         raise PreventUpdate
 
     print("Masks or display-option has changed")
 
-    labeled_masks = pd.DataFrame(labeled_masks)
+    labeled_masks_df = pd.DataFrame(labeled_masks_dict)
 
     masks = read_masks_for_image(image_filepath)
     masks_to_display = []
     for mask in masks:
         mask_id = mask["id"]
-        label = labeled_masks.loc[
-            labeled_masks[MASK_ID_COLUMN] == mask_id, Y_COLUMN
+        label = labeled_masks_df.loc[
+            labeled_masks_df[MASK_ID_COLUMN] == mask_id, Y_COLUMN
         ].values[0]
         if label in [LABEL_UNLABELED, LABEL_WRONG]:
             continue
@@ -287,7 +299,10 @@ def handle_labels_change(labeled_masks, display_option, image_filepath):
     fig.update_layout(autosize=False, width=1024, height=1024)
     fig.add_trace(masks_trace)
 
-    return fig
+    label_counts = labeled_masks_df[Y_COLUMN].value_counts().reset_index()
+    label_counts.columns = ["Label", "Count"]
+
+    return fig, label_counts.to_dict("records")
 
 
 @callback(
