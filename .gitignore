@@ -1,6 +1,7 @@
-model/sam/
+model/
 *.tif
-dataset/**/*
+dataset/
+.backup/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

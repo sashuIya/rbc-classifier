@@ -16,7 +16,7 @@ import cv2
 
 from sklearn.cluster import KMeans
 
-from draw_util import get_masks_img, get_masked_crop, draw_height_and_scale
+from draw_util import get_masks_img, draw_height_and_scale
 from filepath_util import (
     read_masks_for_image,
     read_image,
@@ -25,7 +25,6 @@ from filepath_util import (
     write_masks_features,
 )
 from mask_util import (
-    is_point_in_mask,
     run_sam,
     save_masks,
     compute_resnet_features,
@@ -65,7 +64,9 @@ layout = dbc.Container(
                     ),
                     html.Div("Image filepath"),
                     dcc.Dropdown(
-                        TIF_FILEPATHS, TIF_FILEPATHS[0], id=id("image-filepath")
+                        TIF_FILEPATHS,
+                        TIF_FILEPATHS[0] if TIF_FILEPATHS else "None",
+                        id=id("image-filepath"),
                     ),
                     html.Div(style={"padding": "20px"}),
                     html.Div("Segment-Anything checkpoint filepath"),
@@ -155,16 +156,12 @@ def handle_image_filepath_selection(image_filepath, grid_size):
 
 
 def figure_widget_for_image_and_masks(image, masks):
-    image_and_masks_fig = go.FigureWidget()
-    image_and_masks_fig.update_layout(autosize=False, width=1024, height=1024)
-
-    img_trace = px.imshow(image).data[0]
-    image_and_masks_fig.add_trace(img_trace)
-
     masks_image = get_masks_img(masks, image)[:, :, :3]
     masks_trace = px.imshow(masks_image).data[0]
+
+    image_and_masks_fig = go.FigureWidget()
+    image_and_masks_fig.update_layout(autosize=False, width=1024, height=1024)
     image_and_masks_fig.add_trace(masks_trace)
-    image_and_masks_fig.data[1].update(opacity=0.35)
 
     return image_and_masks_fig
 
@@ -191,10 +188,10 @@ def handle_run_sam_button_click(
         raise PreventUpdate
 
     metadata = read_images_metadata()
-    image_height_adjustment = metadata.loc[
-        metadata["filepath"] == image_filepath, "height"
-    ].values[0]
-    image = read_image(image_filepath)
+    image_height_adjustment = int(
+        metadata.loc[metadata["filepath"] == image_filepath, "height"].values[0]
+    )
+    image = read_image(image_filepath, with_alpha=False)
     masks = run_sam(
         image[:image_height_adjustment, :, :],
         sam_checkpoint_filepath,

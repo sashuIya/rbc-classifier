@@ -162,7 +162,7 @@ def train_pipeline():
     unique_elements, counts = np.unique(labeled_data_df[Y_COLUMN], return_counts=True)
 
     # Print the unique elements and their counts
-    print("Training classifier on:")
+    print("All available data:")
     for element, count in zip(unique_elements, counts):
         print(f"    Class {element}: {count} masks")
 

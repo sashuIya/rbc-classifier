@@ -43,9 +43,11 @@ def get_classifier_model_filepaths():
 
 
 def read_masks_features(image_filepath, suffix=""):
-    return pd.read_csv(
-        get_masks_features_filepath(image_filepath, suffix=suffix), index_col=None
-    )
+    masks_features_filepath = get_masks_features_filepath(image_filepath, suffix=suffix)
+    if not os.path.exists(masks_features_filepath):
+        return None
+
+    return pd.read_csv(masks_features_filepath, index_col=None)
 
 
 def write_masks_features(
@@ -59,6 +61,9 @@ def write_masks_features(
 
 
 def read_images_metadata():
+    if not os.path.exists(METADATA_FILEPATH):
+        return pd.DataFrame(columns=["filepath"])
+
     return pd.read_csv(METADATA_FILEPATH, index_col=None)
 
 
@@ -66,9 +71,13 @@ def write_images_metadata(images_metadata: pd.DataFrame):
     return images_metadata.to_csv(METADATA_FILEPATH, index=False, header=True)
 
 
-def read_image(image_filepath):
+def read_image(image_filepath, with_alpha=False):
     image = cv2.imread(image_filepath)
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    if with_alpha:
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGBA)
+    else:
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
     return image
 
 
@@ -123,6 +132,10 @@ def read_features_for_all_images(check_data=False) -> pd.DataFrame:
         print("  ", image_filepath)
         masks_features = read_masks_features(image_filepath)
 
+        if masks_features is None:
+            print("    no masks found")
+            continue
+
         if check_data:
             masks = read_masks_for_image(image_filepath)
             if len(masks) != masks_features.shape[0]:
@@ -133,6 +146,7 @@ def read_features_for_all_images(check_data=False) -> pd.DataFrame:
                 )
                 continue
 
+        print("    adding {} masks".format(len(masks_features)))
         all_labeled_data.append(masks_features)
 
     print("read_features_for_all_images done")

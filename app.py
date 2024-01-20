@@ -1,5 +1,9 @@
 from dash import Dash, html, dcc, page_registry, page_container
 import dash_bootstrap_components as dbc
+from werkzeug.middleware.profiler import ProfilerMiddleware
+import os
+
+PROF_DIR='/tmp/pprof'
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], use_pages=True)
 
@@ -23,5 +27,18 @@ app.layout = html.Div(
     ]
 )
 
+# Enable dash profiling, etc.
+# app.enable_dev_tools(dev_tools_ui=True, dev_tools_hot_reload=False)
+
 if __name__ == "__main__":
+    if os.getenv("PROFILER", None):
+        app.server.config["PROFILE"] = True
+        app.server.wsgi_app = ProfilerMiddleware(
+            app.server.wsgi_app,
+            sort_by=["cumtime"],
+            restrictions=[50],
+            stream=None,
+            profile_dir=PROF_DIR
+        )
+
     app.run(debug=True)

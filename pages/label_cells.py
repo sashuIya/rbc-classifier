@@ -1,7 +1,20 @@
-from dash import Dash, html, dcc, callback, Output, Input, State, ctx, register_page
+from dash import (
+    Dash,
+    html,
+    ALL,
+    dcc,
+    callback,
+    Output,
+    Input,
+    State,
+    ctx,
+    register_page,
+    MATCH,
+)
 from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 from dash_util import id_factory
+from PIL import Image
 
 import plotly.express as px
 import plotly.graph_objects as go
@@ -60,9 +73,9 @@ DISPLAY_OPTIONS = [
 LABELS = {
     LABEL_UNLABELED: {"color": [255, 255, 255]},
     LABEL_WRONG: {"color": [0, 0, 0]},
-    "0": {"color": [255, 0, 0, 0.35]},
-    "1": {"color": [0, 255, 0, 0.35]},
-    "2": {"color": [0, 0, 255, 0.35]},
+    "0": {"color": [255, 0, 0]},
+    "1": {"color": [0, 255, 0]},
+    "2": {"color": [0, 0, 255]},
 }
 
 id = id_factory("label-cells")
@@ -77,6 +90,10 @@ TIF_FILEPATHS = get_rel_filepaths_from_subfolders(
 CLASSIFIER_MODEL_FILEPATHS = get_classifier_model_filepaths()
 if not CLASSIFIER_MODEL_FILEPATHS:
     CLASSIFIER_MODEL_FILEPATHS = ["none"]
+
+# Create dictionaries to store processed images and image traces
+image_cache = {}
+image_trace_cache = {}
 
 layout = dbc.Container(
     [
@@ -131,6 +148,16 @@ layout = dbc.Container(
 )
 
 
+# Creates Plotly image trace function with caching (Optimized).
+def create_image_trace(image, image_filepath):
+    if image_filepath in image_trace_cache:
+        return image_trace_cache[image_filepath]
+
+    img_trace = px.imshow(image).data[0]
+    image_trace_cache[image_filepath] = img_trace
+    return img_trace
+
+
 def image_to_base64(image_array):
     # Convert the image array to base64-encoded string
     image_base64 = base64.b64encode(image_array).decode("utf-8")
@@ -146,7 +173,7 @@ def ndarray_to_b64(ndarray):
     return base64.b64encode(buffer).decode("utf-8")
 
 
-def generate_crop_with_radio(crop, labels, label, index):
+def crop_html(crop):
     _, crop_png = cv2.imencode(".png", crop)
     crop_base64 = base64.b64encode(crop_png).decode("utf-8")
     crop_html = html.Img(
@@ -154,16 +181,36 @@ def generate_crop_with_radio(crop, labels, label, index):
         style={"display": "block", "margin-bottom": "10px"},
         className="img-item",
     )
+
+    return crop_html
+
+
+def generate_crop_with_radio(
+    crop_with_highlighting, original_crop, mask_id, labels, label
+):
     return dbc.Form(
         [
             dbc.Row(
                 [
-                    dbc.Col(crop_html),
+                    dbc.Col(
+                        html.Div(
+                            "mask_id: {}".format(mask_id),
+                            id={"type": id("mask-id-div"), "index": mask_id},
+                        ),
+                    ),
+                    dbc.Col(
+                        crop_html(crop_with_highlighting),
+                        style={"width": "{}px".format(crop_with_highlighting.shape[1])},
+                    ),
+                    dbc.Col(
+                        crop_html(original_crop),
+                        style={"width": "{}px".format(original_crop.shape[1])},
+                    ),
                     dbc.Col(
                         dbc.RadioItems(
                             options=labels,
                             value=label,
-                            id=id(f"radio-item-{index}"),
+                            id={"type": id("radio-item"), "index": mask_id},
                             inline=False,
                             className="ml-3",
                         )
@@ -180,9 +227,32 @@ def generate_crop_with_radio(crop, labels, label, index):
 
 
 @callback(
+    Output(id("labeled-masks"), "data", allow_duplicate=True),
+    Input({"type": id("radio-item"), "index": ALL}, "value"),
+    State({"type": id("radio-item"), "index": ALL}, "id"),
+    State(id("labeled-masks"), "data"),
+    prevent_initial_call=True,
+    suppress_callback_exceptions=True,
+)
+def update_label(labels, ids, labeled_masks: dict):
+    labeled_masks = pd.DataFrame(labeled_masks)
+    for label, id in zip(labels, ids):
+        mask_id = id["index"]
+
+        print("changing mask_id {} to {}".format(mask_id, label))
+
+        labeled_masks.loc[
+            labeled_masks[MASK_ID_COLUMN] == mask_id,
+            [Y_COLUMN, LABELING_MODE_COLUMN],
+        ] = (label, LABELING_MANUAL)
+
+    return labeled_masks.to_dict()
+
+
+@callback(
     Output(id("canvas"), "figure", allow_duplicate=True),
     Input(id("labeled-masks"), "data"),
-    Input(id("display-options"), "value"),
+    State(id("display-options"), "value"),
     State(id("image-filepath"), "value"),
     prevent_initial_call=True,
 )
@@ -197,16 +267,6 @@ def handle_labels_change(labeled_masks, display_option, image_filepath):
 
     labeled_masks = pd.DataFrame(labeled_masks)
 
-    print(labeled_masks.shape)
-    print(labeled_masks.head())
-
-    fig = go.Figure()
-    fig.update_layout(autosize=False, width=1024, height=1024)
-
-    image = read_image(image_filepath)
-    img_trace = px.imshow(image).data[0]
-    fig.add_trace(img_trace)
-
     masks = read_masks_for_image(image_filepath)
     masks_to_display = []
     for mask in masks:
@@ -219,10 +279,13 @@ def handle_labels_change(labeled_masks, display_option, image_filepath):
         mask["color"] = LABELS[label]["color"]
         masks_to_display.append(mask)
 
+    image = read_image(image_filepath, with_alpha=False)
     masks_image = get_masks_img(masks_to_display, image)[:, :, :3]
     masks_trace = px.imshow(masks_image).data[0]
+
+    fig = go.Figure()
+    fig.update_layout(autosize=False, width=1024, height=1024)
     fig.add_trace(masks_trace)
-    fig.data[1].update(opacity=0.3)
 
     return fig
 
@@ -258,7 +321,18 @@ def handle_canvas_click(
         mask_id = mask["id"]
         if is_point_in_mask(x, y, mask):
             label = active_label if len(crops) == 0 else LABEL_WRONG
-            crops.append((get_masked_crop(image, mask), label))
+            crops.append(
+                (
+                    get_masked_crop(
+                        image, mask, xy_threshold=20, with_highlighting=True
+                    ),
+                    get_masked_crop(
+                        image, mask, xy_threshold=20, with_highlighting=False
+                    ),
+                    label,
+                    mask_id,
+                )
+            )
             labeled_masks.loc[
                 labeled_masks[MASK_ID_COLUMN] == mask_id,
                 [Y_COLUMN, LABELING_MODE_COLUMN],
@@ -267,8 +341,10 @@ def handle_canvas_click(
     labels = list(LABELS.keys())
 
     image_radio_items = []
-    for i, (crop, label) in enumerate(crops):
-        image_radio_item = generate_crop_with_radio(crop, labels, label, i)
+    for crop_with_highlighting, original_crop, label, mask_id in crops:
+        image_radio_item = generate_crop_with_radio(
+            crop_with_highlighting, original_crop, mask_id, labels, label
+        )
         image_radio_items.append(image_radio_item)
 
     return (
@@ -305,6 +381,7 @@ def handle_save_labels_button_click(n_clicks, labeled_masks, image_filepath):
 
     return {}
 
+
 @callback(
     Output(id("canvas"), "figure", allow_duplicate=True),
     Input(id("display-options"), "value"),
@@ -315,12 +392,7 @@ def handle_display_option_change(display_option, figure):
     if not figure:
         raise PreventUpdate
 
-    # Assuming that data[0] is image layer and data[1] is masks layer (see
-    # `update_graph`).
-    if display_option == DISPLAY_IMAGE:
-        figure["data"][1].update(opacity=0.0)
-    if display_option == DISPLAY_MASKS:
-        figure["data"][1].update(opacity=0.3)
+    # TODO: Implement this.
 
     return figure
 
@@ -334,23 +406,16 @@ def handle_image_filepath_selection(image_filepath):
     if not image_filepath:
         return {}, {}, {}
 
-    print('Image filepath changed')
+    print("Image filepath changed")
 
-    image_fig = go.Figure()
-    image_fig.update_layout(autosize=False, width=1024, height=1024)
-
-    image = read_image(image_filepath)
-    img_trace = px.imshow(image).data[0]
-    image_fig.add_trace(img_trace)
-
+    image = read_image(image_filepath, with_alpha=False)
     masks = read_masks_for_image(image_filepath)
     masks_image = get_masks_img(masks, image)[:, :, :3]
     masks_trace = px.imshow(masks_image).data[0]
-    image_fig.add_trace(masks_trace)
-    image_fig.data[1].update(opacity=0.0)
 
-    image_fig.add_trace(px.imshow(image).data[0])
-    image_fig.data[2].update(opacity=0.0)
+    image_fig = go.Figure()
+    image_fig.update_layout(autosize=False, width=1024, height=1024)
+    image_fig.add_trace(masks_trace)
 
     labeled_masks = read_masks_features(image_filepath)
     print("read labeled_masks, shape", labeled_masks.shape)
