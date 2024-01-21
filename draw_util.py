@@ -39,7 +39,14 @@ def get_masks_img_old(masks, image):
     return masks_img
 
 
-def get_masked_crop(image, mask, xy_threshold, with_highlighting):
+def get_masked_crop(
+    image,
+    mask,
+    xy_threshold,
+    with_highlighting,
+    color_mask=np.array([0, 0, 255]),
+    opacity=0.35,
+):
     (x, y, w, h) = mask["bbox"]
     x, y, w, h = int(x), int(y), int(w), int(h)
     segmentation = mask["segmentation"]
@@ -51,29 +58,24 @@ def get_masked_crop(image, mask, xy_threshold, with_highlighting):
     crop = np.copy(image[y0:y1, x0:x1, :])
     alpha_channel = np.full((crop.shape[0], crop.shape[1], 1), 255, dtype=np.uint8)
     crop = np.concatenate((crop, alpha_channel), axis=2)
+    print('crop shape', crop.shape)
 
     segmentation_threshold = np.zeros(crop.shape[:2], dtype=bool)
     segmentation_threshold[
         y - y0 : y - y0 + h + 1, x - x0 : x - x0 + w + 1
     ] = segmentation
 
-    # darkening_factor = 20
-    # crop[segmentation_threshold, :3] -= darkening_factor
-    # crop[:, :, :3] = np.clip(crop[:, :, :3], 0, 255)
+    print('segmentation shape', segmentation.shape)
+    print('segmentation_threshold shape', segmentation_threshold.shape)
 
     if with_highlighting:
-        crop[segmentation_threshold, 0] = np.clip(
-            crop[segmentation_threshold, 0] * 1.2, 0, 255
-        ).astype(np.uint8)
-        crop[segmentation_threshold, 1] = np.clip(
-            crop[segmentation_threshold, 1] * 1.3, 0, 255
-        ).astype(np.uint8)
-        crop[segmentation_threshold, 2] = np.clip(
-            crop[segmentation_threshold, 1] * 1.4, 0, 255
-        ).astype(np.uint8)
+        mask_region = crop[segmentation_threshold, :3]
+        print('mask_region shape', mask_region.shape)
+        blended_color = ((1 - opacity) * mask_region + opacity * color_mask).astype(int)
+        crop[segmentation_threshold, :3] = blended_color
 
-        crop[:, :, 3] = 150
-        crop[segmentation_threshold, 3] = 255
+        # crop[:, :, 3] = 150
+        # crop[segmentation_threshold, 3] = 255
 
     return crop
 

@@ -72,11 +72,11 @@ DISPLAY_OPTIONS = [
 ]
 
 LABELS = {
-    LABEL_UNLABELED: {"color": [255, 255, 255]},
-    LABEL_WRONG: {"color": [0, 0, 0]},
-    "0": {"color": [255, 0, 0]},
-    "1": {"color": [0, 255, 0]},
-    "2": {"color": [0, 0, 255]},
+    LABEL_UNLABELED: {"color": np.array([204, 0, 255])},
+    LABEL_WRONG: {"color": np.array([203, 255, 0])},
+    "0": {"color": np.array([255, 0, 0])},
+    "1": {"color": np.array([0, 255, 102])},
+    "2": {"color": np.array([0, 101, 255])},
 }
 
 id = id_factory("label-cells")
@@ -152,6 +152,11 @@ layout = dbc.Container(
             ],
             justify="between",
         ),
+        dbc.Row(
+            [
+                dbc.Col(id=id("all-masks")),
+            ],
+        ),
         dcc.Store(id=id("labeled-masks")),
         dcc.Store(id=id("figure-store")),
     ],
@@ -185,7 +190,8 @@ def ndarray_to_b64(ndarray):
 
 
 def crop_html(crop):
-    _, crop_png = cv2.imencode(".png", crop)
+    bgr_crop = cv2.cvtColor(crop, cv2.COLOR_RGBA2BGR)
+    _, crop_png = cv2.imencode(".png", bgr_crop)
     crop_base64 = base64.b64encode(crop_png).decode("utf-8")
     crop_html = html.Img(
         src=f"data:image/png;base64,{crop_base64}",
@@ -306,6 +312,56 @@ def handle_labels_change(labeled_masks_dict, display_option, image_filepath):
 
 
 @callback(
+    Output(id("all-masks"), "children"),
+    Input(id("labeled-masks"), "data"),
+    State(id("image-filepath"), "value"),
+)
+def show_all_masks(labeled_masks_dict, image_filepath):
+    labeled_masks_df = pd.DataFrame(labeled_masks_dict)
+
+    image = read_image(image_filepath)
+    masks = read_masks_for_image(image_filepath)
+
+    assert len(masks) == labeled_masks_df.shape[0]
+
+    crops = []
+    for (_, row), mask in zip(labeled_masks_df.iterrows(), masks):
+        assert mask["id"] == row[MASK_ID_COLUMN]
+        label = row[Y_COLUMN]
+        crops.append(
+            (
+                get_masked_crop(
+                    image,
+                    mask,
+                    xy_threshold=20,
+                    with_highlighting=True,
+                    color_mask=LABELS[label]["color"],
+                ),
+                get_masked_crop(
+                    image,
+                    mask,
+                    xy_threshold=20,
+                    with_highlighting=False,
+                    color_mask=LABELS[label]["color"],
+                ),
+                row[Y_COLUMN],
+                row[MASK_ID_COLUMN],
+            )
+        )
+
+    labels = list(LABELS.keys())
+
+    image_radio_items = []
+    for crop_with_highlighting, original_crop, label, mask_id in crops:
+        image_radio_item = generate_crop_with_radio(
+            crop_with_highlighting, original_crop, mask_id, labels, label
+        )
+        image_radio_items.append(image_radio_item)
+
+    return image_radio_items
+
+
+@callback(
     Output(id("clicked-pixel-coords"), "children"),
     Output(id("selected-masks"), "children"),
     Output(id("labeled-masks"), "data", allow_duplicate=True),
@@ -316,12 +372,12 @@ def handle_labels_change(labeled_masks_dict, display_option, image_filepath):
     prevent_initial_call=True,
 )
 def handle_canvas_click(
-    click_data, active_label: str, labeled_masks: dict, image_filepath: str
+    click_data, active_label: str, labeled_masks_dict: dict, image_filepath: str
 ):
     if not click_data:
         raise PreventUpdate
 
-    labeled_masks = pd.DataFrame(labeled_masks)
+    labeled_masks_df = pd.DataFrame(labeled_masks_dict)
 
     point = click_data["points"][0]
     x, y = point["x"], point["y"]
@@ -329,7 +385,7 @@ def handle_canvas_click(
     image = read_image(image_filepath)
     masks = read_masks_for_image(image_filepath)
 
-    assert len(masks) == labeled_masks.shape[0]
+    assert len(masks) == labeled_masks_df.shape[0]
 
     crops = []
     for mask in masks:
@@ -339,17 +395,25 @@ def handle_canvas_click(
             crops.append(
                 (
                     get_masked_crop(
-                        image, mask, xy_threshold=20, with_highlighting=True
+                        image,
+                        mask,
+                        xy_threshold=20,
+                        with_highlighting=True,
+                        color_mask=LABELS[label]["color"],
                     ),
                     get_masked_crop(
-                        image, mask, xy_threshold=20, with_highlighting=False
+                        image,
+                        mask,
+                        xy_threshold=20,
+                        with_highlighting=False,
+                        color_mask=LABELS[label]["color"],
                     ),
                     label,
                     mask_id,
                 )
             )
-            labeled_masks.loc[
-                labeled_masks[MASK_ID_COLUMN] == mask_id,
+            labeled_masks_df.loc[
+                labeled_masks_df[MASK_ID_COLUMN] == mask_id,
                 [Y_COLUMN, LABELING_MODE_COLUMN],
             ] = (label, LABELING_MANUAL)
 
@@ -365,7 +429,7 @@ def handle_canvas_click(
     return (
         html.H3("x: {}, y: {}".format(x, y)),
         image_radio_items,
-        labeled_masks.to_dict(),
+        labeled_masks_df.to_dict(),
     )
 
 
