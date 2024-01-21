@@ -74,9 +74,6 @@ def get_masked_crop(
         blended_color = ((1 - opacity) * mask_region + opacity * color_mask).astype(int)
         crop[segmentation_threshold, :3] = blended_color
 
-        # crop[:, :, 3] = 150
-        # crop[segmentation_threshold, 3] = 255
-
     return crop
 
 
