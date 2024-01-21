@@ -154,7 +154,7 @@ layout = dbc.Container(
         ),
         dbc.Row(
             [
-                dbc.Col(id=id("all-masks")),
+                dbc.Col(id=id("all-masks"), width="auto"),
             ],
         ),
         dcc.Store(id=id("labeled-masks")),
