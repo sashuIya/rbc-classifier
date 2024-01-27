@@ -5,6 +5,8 @@ import dash_daq as daq
 from dash_util import id_factory
 import pandas as pd
 
+from pages.widgets.image_selector import TIF_FILEPATHS, image_selection_dropdown
+
 from draw_util import draw_height_and_scale
 
 import plotly.express as px
@@ -12,12 +14,6 @@ import plotly.graph_objects as go
 
 from filepath_util import *
 
-import os
-
-IMAGES_PATH = os.path.normpath("./dataset/")
-TIF_FILEPATHS = get_rel_filepaths_from_subfolders(
-    folder_path=IMAGES_PATH, extension="tif"
-)
 
 id = id_factory("measure-image")
 dash.register_page(__name__, path="/", order=0)
@@ -30,8 +26,7 @@ layout = html.Div(
                     children="Measure image params",
                     style={"textAlign": "center"},
                 ),
-                #
-                dcc.Dropdown(TIF_FILEPATHS, TIF_FILEPATHS[0], id=id("image-filepath")),
+                image_selection_dropdown(id("image-filepath")),
                 html.Div(style={"padding-bottom": "20px"}),
             ]
         ),
@@ -132,7 +127,10 @@ def handle_save_metadata_click(
     df = read_images_metadata()
     series = df.loc[df["filepath"] == image_filepath]
 
+    completed = False
+
     if len(series) > 0:
+        completed = series.iloc[0]["completed"]
         df = df.drop(series.index)
 
     data = pd.DataFrame(
@@ -142,6 +140,7 @@ def handle_save_metadata_click(
             micrometers=[micrometers],
             scale_x0=[scale_x0],
             scale_x1=[scale_x1],
+            completed=[completed],
         )
     )
     df = pd.concat([df, data], ignore_index=True)

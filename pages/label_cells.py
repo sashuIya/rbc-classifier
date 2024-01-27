@@ -17,6 +17,11 @@ import dash_bootstrap_components as dbc
 from dash_util import id_factory
 from PIL import Image
 
+from pages.widgets.image_selector import (
+    get_image_filepath_options,
+    image_selection_dropdown,
+)
+
 import plotly.express as px
 import plotly.graph_objects as go
 
@@ -30,11 +35,13 @@ import cv2
 
 from draw_util import get_masks_img, get_masked_crop
 from filepath_util import (
+    read_images_metadata,
     read_masks_for_image,
     read_image,
     get_rel_filepaths_from_subfolders,
     get_masks_features_filepath,
     read_masks_features,
+    write_images_metadata,
     write_masks_features,
     get_classifier_model_filepaths,
 )
@@ -58,7 +65,7 @@ from consts import (
     LABEL_WRONG,
 )
 
-IMAGES_PATH = os.path.normpath("./dataset/")
+CHECKBOX_COMPLETED = "Completed"
 
 DISPLAY_IMAGE = "Image"
 DISPLAY_MASKS = "Masks"
@@ -84,10 +91,6 @@ register_page(__name__, order=2)
 
 # app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 
-TIF_FILEPATHS = get_rel_filepaths_from_subfolders(
-    folder_path=IMAGES_PATH, extension="tif"
-)
-
 CLASSIFIER_MODEL_FILEPATHS = get_classifier_model_filepaths()
 if not CLASSIFIER_MODEL_FILEPATHS:
     CLASSIFIER_MODEL_FILEPATHS = ["none"]
@@ -102,9 +105,7 @@ layout = dbc.Container(
             dbc.Col(
                 [
                     html.H1(children="Labeling tool", style={"textAlign": "center"}),
-                    dcc.Dropdown(
-                        TIF_FILEPATHS, TIF_FILEPATHS[0], id=id("image-filepath")
-                    ),
+                    image_selection_dropdown(id=id("image-filepath")),
                     dcc.Dropdown(
                         CLASSIFIER_MODEL_FILEPATHS,
                         CLASSIFIER_MODEL_FILEPATHS[0],
@@ -125,6 +126,7 @@ layout = dbc.Container(
                         id=id("save-labels-button"),
                         n_clicks=0,
                     ),
+                    dcc.Checklist([CHECKBOX_COMPLETED], id=id("completed-checkbox")),
                     dcc.RadioItems(
                         DISPLAY_OPTIONS, DISPLAY_LABELED_DATA, id=id("display-options")
                     ),
@@ -479,6 +481,7 @@ def handle_display_option_change(display_option, figure):
 @callback(
     Output(id("canvas"), "figure"),
     Output(id("labeled-masks"), "data"),
+    Output(id("completed-checkbox"), "value"),
     Input(id("image-filepath"), "value"),
 )
 def handle_image_filepath_selection(image_filepath):
@@ -508,7 +511,19 @@ def handle_image_filepath_selection(image_filepath):
 
     labeled_masks = labeled_masks[[MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN]]
 
-    return image_fig, labeled_masks.to_dict()
+    images_metadata = read_images_metadata()
+    completed = (
+        image_filepath in images_metadata["filepath"].values
+        and images_metadata.loc[
+            images_metadata["filepath"] == image_filepath, "completed"
+        ].iloc[0]
+    )
+
+    return (
+        image_fig,
+        labeled_masks.to_dict(),
+        [CHECKBOX_COMPLETED] if completed else [],
+    )
 
 
 @callback(
@@ -550,3 +565,28 @@ def handle_run_classifier_button(n_clicks, classifier_model_filepath, image_file
     ] = predictions
 
     return labeled_masks.to_dict()
+
+
+@callback(
+    Output(id("image-filepath"), "options"),
+    Input(id("completed-checkbox"), "value"),
+    State(id("image-filepath"), "value"),
+)
+def handle_completed_checkbox(selected_items, image_filepath):
+    if not image_filepath:
+        raise PreventUpdate
+
+    df = read_images_metadata()
+    if image_filepath not in df["filepath"].values:
+        raise PreventUpdate
+
+    df.loc[
+        df["filepath"] == image_filepath,
+        "completed",
+    ] = (
+        CHECKBOX_COMPLETED in selected_items
+    )
+
+    write_images_metadata(df)
+
+    return get_image_filepath_options()

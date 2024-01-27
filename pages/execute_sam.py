@@ -34,13 +34,11 @@ from mask_util import (
 
 import warnings
 
+from pages.widgets.image_selector import image_selection_dropdown
+
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
-METADATA_DF = read_images_metadata()
 SAM_CHECKPOINTS_FOLDER = os.path.normpath("./model/sam/")
-
-
-TIF_FILEPATHS = list(METADATA_DF["filepath"].unique())
 SAM_CHECKPOINT_FILEPATHS = get_rel_filepaths_from_subfolders(
     folder_path=SAM_CHECKPOINTS_FOLDER, extension="pth"
 )
@@ -63,11 +61,7 @@ layout = dbc.Container(
                         style={"textAlign": "center"},
                     ),
                     html.Div("Image filepath"),
-                    dcc.Dropdown(
-                        TIF_FILEPATHS,
-                        TIF_FILEPATHS[0] if TIF_FILEPATHS else "None",
-                        id=id("image-filepath"),
-                    ),
+                    image_selection_dropdown(id=id("image-filepath")),
                     html.Div(style={"padding": "20px"}),
                     html.Div("Segment-Anything checkpoint filepath"),
                     dcc.Dropdown(
@@ -103,7 +97,6 @@ layout = dbc.Container(
                     html.H4("Masks preview"),
                     dcc.Graph(id=id("masks-preview")),
                 ],
-                # width=22,
             )
         ),
     ],
