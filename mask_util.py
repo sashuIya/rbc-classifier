@@ -142,14 +142,12 @@ def compute_resnet_features(masks: dict, image: np.ndarray):
         dataloader, desc="Computing resnet features for {} crops".format(len(masks))
     ):
         batch = batch.to(DEVICE)
-        # batch = batch.unsqueeze(0).to(DEVICE)
 
         with torch.no_grad():
             batch_resnet_features = features_extractor_model(batch)
 
-        batch_resnet_features = batch_resnet_features.squeeze(0).squeeze(-1).squeeze(-1)
-
-        outputs_list.append(batch_resnet_features.squeeze(0).cpu().numpy())
+        batch_resnet_features = batch_resnet_features.squeeze(-1).squeeze(-1)
+        outputs_list.append(batch_resnet_features.cpu().numpy())
 
     all_outputs = np.concatenate(outputs_list, axis=0)
 
