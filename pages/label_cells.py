@@ -1,3 +1,5 @@
+from functools import wraps
+import time
 from dash import (
     Dash,
     html,
@@ -64,6 +66,7 @@ from consts import (
     LABEL_UNLABELED,
     LABEL_WRONG,
 )
+from utils.timing import timeit
 
 CHECKBOX_COMPLETED = "Completed"
 
@@ -253,12 +256,11 @@ def generate_crop_with_radio(
     prevent_initial_call=True,
     suppress_callback_exceptions=True,
 )
+@timeit
 def update_label(labels, ids, labeled_masks: dict):
     labeled_masks = pd.DataFrame(labeled_masks)
     for label, id in zip(labels, ids):
         mask_id = id["index"]
-
-        print("changing mask_id {} to {}".format(mask_id, label))
 
         labeled_masks.loc[
             labeled_masks[MASK_ID_COLUMN] == mask_id,
@@ -276,14 +278,13 @@ def update_label(labels, ids, labeled_masks: dict):
     State(id("image-filepath"), "value"),
     prevent_initial_call=True,
 )
+@timeit
 def handle_labels_change(labeled_masks_dict, display_option, image_filepath):
     if display_option != DISPLAY_LABELED_DATA:
         raise PreventUpdate
 
     if not labeled_masks_dict:
         raise PreventUpdate
-
-    print("Masks or display-option has changed")
 
     labeled_masks_df = pd.DataFrame(labeled_masks_dict)
 
@@ -318,6 +319,7 @@ def handle_labels_change(labeled_masks_dict, display_option, image_filepath):
     Input(id("labeled-masks"), "data"),
     State(id("image-filepath"), "value"),
 )
+@timeit
 def show_all_masks(labeled_masks_dict, image_filepath):
     labeled_masks_df = pd.DataFrame(labeled_masks_dict)
 
@@ -373,6 +375,7 @@ def show_all_masks(labeled_masks_dict, image_filepath):
     State(id("image-filepath"), "value"),
     prevent_initial_call=True,
 )
+@timeit
 def handle_canvas_click(
     click_data, active_label: str, labeled_masks_dict: dict, image_filepath: str
 ):
@@ -441,6 +444,7 @@ def handle_canvas_click(
     State(id("labeled-masks"), "data"),
     State(id("image-filepath"), "value"),
 )
+@timeit
 def handle_save_labels_button_click(n_clicks, labeled_masks, image_filepath):
     if n_clicks == 0 or not labeled_masks:
         raise PreventUpdate
@@ -469,6 +473,7 @@ def handle_save_labels_button_click(n_clicks, labeled_masks, image_filepath):
     Input(id("canvas"), "figure"),
     prevent_initial_call=True,
 )
+@timeit
 def handle_display_option_change(display_option, figure):
     if not figure:
         raise PreventUpdate
@@ -484,6 +489,7 @@ def handle_display_option_change(display_option, figure):
     Output(id("completed-checkbox"), "value"),
     Input(id("image-filepath"), "value"),
 )
+@timeit
 def handle_image_filepath_selection(image_filepath):
     if not image_filepath:
         return {}, {}, {}
@@ -531,6 +537,7 @@ def handle_image_filepath_selection(image_filepath):
     Output(id("classifier-model"), "value"),
     Input(id("train-classifier-button"), "n_clicks"),
 )
+@timeit
 def handle_train_classifier_button(n_clicks):
     if n_clicks == 0:
         raise PreventUpdate
@@ -550,6 +557,7 @@ def handle_train_classifier_button(n_clicks):
     State(id("image-filepath"), "value"),
     prevent_initial_call=True,
 )
+@timeit
 def handle_run_classifier_button(n_clicks, classifier_model_filepath, image_filepath):
     if not n_clicks or not image_filepath or not classifier_model_filepath:
         raise PreventUpdate
@@ -572,6 +580,7 @@ def handle_run_classifier_button(n_clicks, classifier_model_filepath, image_file
     Input(id("completed-checkbox"), "value"),
     State(id("image-filepath"), "value"),
 )
+@timeit
 def handle_completed_checkbox(selected_items, image_filepath):
     if not image_filepath:
         raise PreventUpdate

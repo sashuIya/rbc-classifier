@@ -58,19 +58,14 @@ def get_masked_crop(
     crop = np.copy(image[y0:y1, x0:x1, :])
     alpha_channel = np.full((crop.shape[0], crop.shape[1], 1), 255, dtype=np.uint8)
     crop = np.concatenate((crop, alpha_channel), axis=2)
-    print('crop shape', crop.shape)
 
     segmentation_threshold = np.zeros(crop.shape[:2], dtype=bool)
     segmentation_threshold[
         y - y0 : y - y0 + h + 1, x - x0 : x - x0 + w + 1
     ] = segmentation
 
-    print('segmentation shape', segmentation.shape)
-    print('segmentation_threshold shape', segmentation_threshold.shape)
-
     if with_highlighting:
         mask_region = crop[segmentation_threshold, :3]
-        print('mask_region shape', mask_region.shape)
         blended_color = ((1 - opacity) * mask_region + opacity * color_mask).astype(int)
         crop[segmentation_threshold, :3] = blended_color
 
