@@ -1,6 +1,7 @@
 from dash import Dash, html, dcc, callback, Output, Input, State, ctx, register_page
 from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
+from tqdm import tqdm
 from dash_util import id_factory
 
 import plotly.express as px
@@ -34,7 +35,11 @@ from mask_util import (
 
 import warnings
 
-from pages.widgets.image_selector import image_selection_dropdown
+from pages.widgets.image_selector import (
+    image_selection_dropdown,
+    is_completed,
+    is_measured,
+)
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
@@ -51,6 +56,15 @@ USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION = "Use mesh size for masks file suffi
 id = id_factory("execute_sam")
 register_page(__name__, order=1)
 
+
+def is_measured_and_not_completed(df, filepath):
+    return (
+        filepath in df["filepath"].values
+        and df.loc[df["filepath"] == filepath, "measured"].iloc[0]
+        and not df.loc[df["filepath"] == filepath, "completed"].iloc[0]
+    )
+
+
 layout = dbc.Container(
     [
         dbc.Row(
@@ -61,7 +75,10 @@ layout = dbc.Container(
                         style={"textAlign": "center"},
                     ),
                     html.Div("Image filepath"),
-                    image_selection_dropdown(id=id("image-filepath")),
+                    image_selection_dropdown(
+                        id=id("image-filepath"),
+                        predicate_fn=is_completed,
+                    ),
                     html.Div(style={"padding": "20px"}),
                     html.Div("Segment-Anything checkpoint filepath"),
                     dcc.Dropdown(
@@ -81,6 +98,17 @@ layout = dbc.Container(
                     html.Button(
                         "Compute and save features",
                         id=id("compute-features-button"),
+                        n_clicks=0,
+                    ),
+                    dbc.Alert(
+                        "Cannot execute for already completed image!",
+                        id=id("execute-alert"),
+                        color="danger",
+                        is_open=False,
+                    ),
+                    html.Button(
+                        "Run SAM and compute features for all not-completed",
+                        id=id("run-for-all-button"),
                         n_clicks=0,
                     ),
                     dcc.Loading(
@@ -111,12 +139,13 @@ def suffix_for_masks_file(points_per_side):
 @callback(
     Output(id("image-height"), "children"),
     Output(id("canvas"), "figure"),
+    Output(id("execute-alert"), "is_open"),
     Input(id("image-filepath"), "value"),
     Input(id("grid-size"), "value"),
 )
 def handle_image_filepath_selection(image_filepath, grid_size):
     if not image_filepath:
-        return {}, {}
+        return {}, {}, False
 
     image_fig = go.FigureWidget()
     image_fig.update_layout(autosize=False, width=1024, height=1024)
@@ -145,7 +174,7 @@ def handle_image_filepath_selection(image_filepath, grid_size):
         image_fig, image.shape, height, scale_x0, scale_x1, micrometers
     )
 
-    return ["Image height without scaling: {}".format(height)], image_fig
+    return ["Image height without scaling: {}".format(height)], image_fig, False
 
 
 def figure_widget_for_image_and_masks(image, masks):
@@ -159,28 +188,14 @@ def figure_widget_for_image_and_masks(image, masks):
     return image_and_masks_fig
 
 
-@callback(
-    Output(id("masks-preview"), "figure"),
-    Output(id("loading-sam-output"), "children"),
-    Input(id("run-sam-button"), "n_clicks"),
-    State(id("image-filepath"), "value"),
-    State(id("sam-checkpoint-filepath"), "value"),
-    State(id("grid-size"), "value"),
-    State(id("crop-n-layers"), "value"),
-    State(id("grid-size-as-suffix"), "value"),
-)
-def handle_run_sam_button_click(
-    n_clicks,
+def run_sam_for_image(
+    metadata,
     image_filepath,
     sam_checkpoint_filepath,
-    points_per_side,
     crop_n_layers,
+    points_per_side,
     points_per_side_as_suffix: list,
 ):
-    if ctx.triggered_id != id("run-sam-button"):
-        raise PreventUpdate
-
-    metadata = read_images_metadata()
     image_height_adjustment = int(
         metadata.loc[metadata["filepath"] == image_filepath, "height"].values[0]
     )
@@ -197,11 +212,67 @@ def handle_run_sam_button_click(
         suffix = suffix_for_masks_file(points_per_side)
     save_masks(masks, image_filepath, suffix=suffix)
 
-    return figure_widget_for_image_and_masks(image, masks), {}
+    return image, masks
 
 
 @callback(
-    Output(id("compute-features-button"), "style"),
+    Output(id("masks-preview"), "figure"),
+    Output(id("loading-sam-output"), "children"),
+    Output(id("execute-alert"), "is_open", allow_duplicate=True),
+    Input(id("run-sam-button"), "n_clicks"),
+    State(id("image-filepath"), "value"),
+    State(id("sam-checkpoint-filepath"), "value"),
+    State(id("grid-size"), "value"),
+    State(id("crop-n-layers"), "value"),
+    State(id("grid-size-as-suffix"), "value"),
+    prevent_initial_call=True,
+)
+def handle_run_sam_button_click(
+    n_clicks,
+    image_filepath,
+    sam_checkpoint_filepath,
+    points_per_side,
+    crop_n_layers,
+    points_per_side_as_suffix: list,
+):
+    if not n_clicks or not image_filepath:
+        raise PreventUpdate
+
+    metadata = read_images_metadata()
+    if is_completed(metadata, image_filepath):
+        return {}, {}, True
+
+    image, masks = run_sam_for_image(
+        metadata=metadata,
+        image_filepath=image_filepath,
+        sam_checkpoint_filepath=sam_checkpoint_filepath,
+        crop_n_layers=crop_n_layers,
+        points_per_side=points_per_side,
+        points_per_side_as_suffix=points_per_side_as_suffix,
+    )
+
+    return figure_widget_for_image_and_masks(image, masks), {}, False
+
+
+def compute_and_write_masks_features(
+    image_filepath, image, masks, points_per_side, points_per_side_as_suffix
+):
+    resnet_features, resnet_columns = compute_resnet_features(masks, image)
+    measure_features, measure_columns = compute_measure_features(masks, image_filepath)
+
+    all_features = np.concatenate([resnet_features, measure_features], axis=1)
+    all_columns = resnet_columns + measure_columns
+    features_df = construct_features_dataframe(
+        image_filepath, masks, all_features, all_columns
+    )
+    suffix = ""
+    if USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION in points_per_side_as_suffix:
+        suffix = suffix_for_masks_file(points_per_side)
+    write_masks_features(features_df, image_filepath, suffix=suffix)
+
+
+@callback(
+    Output(id("execute-alert"), "is_open", allow_duplicate=True),
     Input(id("compute-features-button"), "n_clicks"),
     State(id("image-filepath"), "value"),
     State(id("grid-size"), "value"),
@@ -214,6 +285,10 @@ def handle_compute_features_button_click(
     if not n_clicks or not image_filepath:
         raise PreventUpdate
 
+    metadata = read_images_metadata()
+    if is_completed(metadata, image_filepath):
+        return True
+
     suffix = ""
     if USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION in points_per_side_as_suffix:
         suffix = suffix_for_masks_file(points_per_side)
@@ -221,14 +296,66 @@ def handle_compute_features_button_click(
     image = read_image(image_filepath)
     masks = read_masks_for_image(image_filepath, suffix=suffix)
 
-    resnet_features, resnet_columns = compute_resnet_features(masks, image)
-    measure_features, measure_columns = compute_measure_features(masks, image_filepath)
-
-    all_features = np.concatenate([resnet_features, measure_features], axis=1)
-    all_columns = resnet_columns + measure_columns
-    features_df = construct_features_dataframe(
-        image_filepath, masks, all_features, all_columns
+    compute_and_write_masks_features(
+        image_filepath, image, masks, points_per_side, points_per_side_as_suffix
     )
-    write_masks_features(features_df, image_filepath, suffix=suffix)
+
+    return False
+
+
+@callback(
+    Output(id("run-for-all-button"), "style"),
+    Input(id("run-for-all-button"), "n_clicks"),
+    State(id("sam-checkpoint-filepath"), "value"),
+    State(id("grid-size"), "value"),
+    State(id("crop-n-layers"), "value"),
+    State(id("grid-size-as-suffix"), "value"),
+)
+def handle_run_for_all_button(
+    n_clicks,
+    sam_checkpoint_filepath,
+    points_per_side,
+    crop_n_layers,
+    points_per_side_as_suffix: list,
+):
+    if not n_clicks:
+        raise PreventUpdate
+
+    metadata = read_images_metadata()
+    image_filepaths = []
+    skipping = []
+    for filepath in metadata["filepath"]:
+        if is_measured(metadata, filepath) and not is_completed(metadata, filepath):
+            image_filepaths.append(filepath)
+        else:
+            skipping.append(filepath)
+
+    print("skipping", skipping)
+    print("running for", image_filepaths)
+
+    if n_clicks == 1:
+        return {}
+
+    suffix = ""
+    if USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION in points_per_side_as_suffix:
+        suffix = suffix_for_masks_file(points_per_side)
+
+    for image_filepath in tqdm(image_filepaths, desc="Running pipeline"):
+        print('Executing for', image_filepath)
+
+        run_sam_for_image(
+            metadata=metadata,
+            image_filepath=image_filepath,
+            sam_checkpoint_filepath=sam_checkpoint_filepath,
+            crop_n_layers=crop_n_layers,
+            points_per_side=points_per_side,
+            points_per_side_as_suffix=points_per_side_as_suffix,
+        )
+
+        image = read_image(image_filepath)
+        masks = read_masks_for_image(image_filepath, suffix=suffix)
+        compute_and_write_masks_features(
+            image_filepath, image, masks, points_per_side, points_per_side_as_suffix
+        )
 
     return {}

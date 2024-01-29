@@ -5,7 +5,7 @@ import dash_daq as daq
 from dash_util import id_factory
 import pandas as pd
 
-from pages.widgets.image_selector import TIF_FILEPATHS, image_selection_dropdown
+from pages.widgets.image_selector import TIF_FILEPATHS, image_selection_dropdown, is_measured
 
 from draw_util import draw_height_and_scale
 
@@ -26,7 +26,7 @@ layout = html.Div(
                     children="Measure image params",
                     style={"textAlign": "center"},
                 ),
-                image_selection_dropdown(id("image-filepath")),
+                image_selection_dropdown(id("image-filepath"), is_measured),
                 html.Div(style={"padding-bottom": "20px"}),
             ]
         ),
@@ -140,6 +140,7 @@ def handle_save_metadata_click(
             micrometers=[micrometers],
             scale_x0=[scale_x0],
             scale_x1=[scale_x1],
+            measured=[True],
             completed=[completed],
         )
     )

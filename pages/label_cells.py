@@ -22,6 +22,7 @@ from PIL import Image
 from pages.widgets.image_selector import (
     get_image_filepath_options,
     image_selection_dropdown,
+    is_completed,
 )
 
 import plotly.express as px
@@ -108,7 +109,7 @@ layout = dbc.Container(
             dbc.Col(
                 [
                     html.H1(children="Labeling tool", style={"textAlign": "center"}),
-                    image_selection_dropdown(id=id("image-filepath")),
+                    image_selection_dropdown(id=id("image-filepath"), predicate_fn=is_completed),
                     dcc.Dropdown(
                         CLASSIFIER_MODEL_FILEPATHS,
                         CLASSIFIER_MODEL_FILEPATHS[0],
@@ -598,4 +599,4 @@ def handle_completed_checkbox(selected_items, image_filepath):
 
     write_images_metadata(df)
 
-    return get_image_filepath_options()
+    return get_image_filepath_options(predicate_fn=is_completed)
