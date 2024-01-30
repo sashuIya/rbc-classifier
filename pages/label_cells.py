@@ -161,7 +161,6 @@ layout = dbc.Container(
                     html.Div(style={"padding": "20px"}),
                     dcc.RadioItems(list(LABELS.keys()), "0", id=id("active-label")),
                 ],
-                # width=22,
             )
         ),
         dbc.Row(
@@ -321,30 +320,6 @@ def update_label(labels, ids, labeled_masks: dict):
 
 
 @callback(
-    Output(id("canvas"), "figure", allow_duplicate=True),
-    Output(id("labels-stats"), "data"),
-    Input(id("labeled-masks"), "data"),
-    State(id("display-options"), "value"),
-    State(id("image-filepath"), "value"),
-    prevent_initial_call=True,
-)
-@timeit
-def handle_labels_change(labeled_masks_dict, display_option, image_filepath):
-    if not labeled_masks_dict:
-        raise PreventUpdate
-
-    labeled_masks_df = pd.DataFrame(labeled_masks_dict)
-    image_fig = image_with_masks_figure(
-        image_filepath, display_option, labeled_masks_df
-    )
-
-    label_counts = labeled_masks_df[Y_COLUMN].value_counts().reset_index()
-    label_counts.columns = ["Label", "Count"]
-
-    return image_fig, label_counts.to_dict("records")
-
-
-@callback(
     Output(id("all-masks"), "children"),
     Input(id("labeled-masks"), "data"),
     State(id("image-filepath"), "value"),
@@ -398,7 +373,6 @@ def show_all_masks(labeled_masks_dict, image_filepath):
 @callback(
     Output(id("clicked-pixel-coords"), "children"),
     Output(id("selected-masks"), "children"),
-    Output(id("labeled-masks"), "data", allow_duplicate=True),
     Input(id("canvas"), "clickData"),
     State(id("active-label"), "value"),
     State(id("labeled-masks"), "data"),
@@ -447,10 +421,6 @@ def handle_canvas_click(
                     mask_id,
                 )
             )
-            labeled_masks_df.loc[
-                labeled_masks_df[MASK_ID_COLUMN] == mask_id,
-                [Y_COLUMN, LABELING_MODE_COLUMN],
-            ] = (label, LABELING_MANUAL)
 
     labels = list(LABELS.keys())
 
@@ -464,7 +434,6 @@ def handle_canvas_click(
     return (
         html.H3("x: {}, y: {}".format(x, y)),
         image_radio_items,
-        labeled_masks_df.to_dict(),
     )
 
 
@@ -498,14 +467,29 @@ def handle_save_labels_button_click(n_clicks, labeled_masks, image_filepath):
 
 
 @callback(
-    Output(id("canvas"), "figure", allow_duplicate=True),
-    Input(id("display-options"), "value"),
-    State(id("image-filepath"), "value"),
-    State(id("labeled-masks"), "data"),
-    prevent_initial_call=True,
+    Output(id("labels-stats"), "data"),
+    Input(id("labeled-masks"), "data"),
 )
 @timeit
-def handle_display_option_change(display_option, image_filepath, labeled_masks_dict):
+def perform_stats_change(labeled_masks_dict):
+    if not labeled_masks_dict:
+        raise PreventUpdate
+
+    labeled_masks_df = pd.DataFrame(labeled_masks_dict)
+    label_counts = labeled_masks_df[Y_COLUMN].value_counts().reset_index()
+    label_counts.columns = ["Label", "Count"]
+
+    return label_counts.to_dict("records")
+
+
+@callback(
+    Output(id("canvas"), "figure"),
+    Input(id("display-options"), "value"),
+    Input(id("labeled-masks"), "data"),
+    State(id("image-filepath"), "value"),
+)
+@timeit
+def perform_canvas_change(display_option, labeled_masks_dict, image_filepath):
     if not image_filepath:
         raise PreventUpdate
 
@@ -515,14 +499,12 @@ def handle_display_option_change(display_option, image_filepath, labeled_masks_d
 
 
 @callback(
-    Output(id("canvas"), "figure"),
     Output(id("labeled-masks"), "data"),
     Output(id("completed-checkbox"), "value"),
     Input(id("image-filepath"), "value"),
-    State(id("display-options"), "value"),
 )
 @timeit
-def handle_image_filepath_selection(image_filepath, display_option):
+def handle_image_filepath_selection(image_filepath):
     if not image_filepath:
         return {}, {}, {}
 
@@ -531,8 +513,6 @@ def handle_image_filepath_selection(image_filepath, display_option):
     labeled_masks = read_masks_features(image_filepath)
     print("read labeled_masks, shape", labeled_masks.shape)
     print(labeled_masks[[MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN]].head())
-
-    image_fig = image_with_masks_figure(image_filepath, display_option, labeled_masks)
 
     labeled_masks = labeled_masks[[MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN]]
 
@@ -545,7 +525,6 @@ def handle_image_filepath_selection(image_filepath, display_option):
     )
 
     return (
-        image_fig,
         labeled_masks.to_dict(),
         [CHECKBOX_COMPLETED] if completed else [],
     )
