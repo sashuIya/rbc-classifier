@@ -36,7 +36,7 @@ import pandas as pd
 import numpy as np
 import cv2
 
-from draw_util import get_masks_img, get_masked_crop
+from draw_util import MasksColorOptions, get_masks_img, get_masked_crop
 from filepath_util import (
     read_images_metadata,
     read_masks_for_image,
@@ -82,6 +82,17 @@ DISPLAY_OPTIONS = [
     DISPLAY_UNLABELED_DATA,
 ]
 
+
+def masks_display_option(display_option: str) -> MasksColorOptions:
+    option_to_option = {
+        DISPLAY_IMAGE: MasksColorOptions.NONE,
+        DISPLAY_MASKS: MasksColorOptions.RANDOM,
+        DISPLAY_LABELED_DATA: MasksColorOptions.BY_LABEL,
+        DISPLAY_UNLABELED_DATA: MasksColorOptions.NONE,
+    }
+    return option_to_option[display_option]
+
+
 LABELS = {
     LABEL_UNLABELED: {"color": np.array([204, 0, 255])},
     LABEL_WRONG: {"color": np.array([203, 255, 0])},
@@ -109,7 +120,9 @@ layout = dbc.Container(
             dbc.Col(
                 [
                     html.H1(children="Labeling tool", style={"textAlign": "center"}),
-                    image_selection_dropdown(id=id("image-filepath"), predicate_fn=is_completed),
+                    image_selection_dropdown(
+                        id=id("image-filepath"), predicate_fn=is_completed
+                    ),
                     dcc.Dropdown(
                         CLASSIFIER_MODEL_FILEPATHS,
                         CLASSIFIER_MODEL_FILEPATHS[0],
@@ -249,6 +262,42 @@ def generate_crop_with_radio(
     )
 
 
+def image_with_masks_figure(
+    image_filepath: str, display_option: str, labels_df: pd.DataFrame
+) -> go.Figure:
+    image = read_image(image_filepath, with_alpha=False)
+    masks = read_masks_for_image(image_filepath)
+
+    assert len(masks) == labels_df.shape[0], (
+        "Labels do not correspond to the masks."
+        "Probably you updated the masks."
+        "Consider removing {}".format(get_masks_features_filepath(image_filepath))
+    )
+
+    color_by_mask_id = dict()
+    for _, row in labels_df.iterrows():
+        mask_id, label = row[MASK_ID_COLUMN], row[Y_COLUMN]
+        if label in [LABEL_UNLABELED, LABEL_WRONG]:
+            continue
+        color_by_mask_id[mask_id] = LABELS[label]["color"]
+
+    masks = read_masks_for_image(image_filepath)
+    image = get_masks_img(
+        masks,
+        image,
+        masks_color_option=masks_display_option(display_option),
+        color_by_mask_id=color_by_mask_id,
+    )
+
+    trace = px.imshow(image).data[0]
+
+    image_fig = go.Figure()
+    image_fig.update_layout(autosize=False, width=1024, height=1024)
+    image_fig.add_trace(trace)
+
+    return image_fig
+
+
 @callback(
     Output(id("labeled-masks"), "data", allow_duplicate=True),
     Input({"type": id("radio-item"), "index": ALL}, "value"),
@@ -281,38 +330,18 @@ def update_label(labels, ids, labeled_masks: dict):
 )
 @timeit
 def handle_labels_change(labeled_masks_dict, display_option, image_filepath):
-    if display_option != DISPLAY_LABELED_DATA:
-        raise PreventUpdate
-
     if not labeled_masks_dict:
         raise PreventUpdate
 
     labeled_masks_df = pd.DataFrame(labeled_masks_dict)
-
-    masks = read_masks_for_image(image_filepath)
-    masks_to_display = []
-    for mask in masks:
-        mask_id = mask["id"]
-        label = labeled_masks_df.loc[
-            labeled_masks_df[MASK_ID_COLUMN] == mask_id, Y_COLUMN
-        ].values[0]
-        if label in [LABEL_UNLABELED, LABEL_WRONG]:
-            continue
-        mask["color"] = LABELS[label]["color"]
-        masks_to_display.append(mask)
-
-    image = read_image(image_filepath, with_alpha=False)
-    masks_image = get_masks_img(masks_to_display, image)[:, :, :3]
-    masks_trace = px.imshow(masks_image).data[0]
-
-    fig = go.Figure()
-    fig.update_layout(autosize=False, width=1024, height=1024)
-    fig.add_trace(masks_trace)
+    image_fig = image_with_masks_figure(
+        image_filepath, display_option, labeled_masks_df
+    )
 
     label_counts = labeled_masks_df[Y_COLUMN].value_counts().reset_index()
     label_counts.columns = ["Label", "Count"]
 
-    return fig, label_counts.to_dict("records")
+    return image_fig, label_counts.to_dict("records")
 
 
 @callback(
@@ -471,17 +500,18 @@ def handle_save_labels_button_click(n_clicks, labeled_masks, image_filepath):
 @callback(
     Output(id("canvas"), "figure", allow_duplicate=True),
     Input(id("display-options"), "value"),
-    Input(id("canvas"), "figure"),
+    State(id("image-filepath"), "value"),
+    State(id("labeled-masks"), "data"),
     prevent_initial_call=True,
 )
 @timeit
-def handle_display_option_change(display_option, figure):
-    if not figure:
+def handle_display_option_change(display_option, image_filepath, labeled_masks_dict):
+    if not image_filepath:
         raise PreventUpdate
 
-    # TODO: Implement this.
+    labeled_masks_df = pd.DataFrame(labeled_masks_dict)
 
-    return figure
+    return image_with_masks_figure(image_filepath, display_option, labeled_masks_df)
 
 
 @callback(
@@ -489,32 +519,20 @@ def handle_display_option_change(display_option, figure):
     Output(id("labeled-masks"), "data"),
     Output(id("completed-checkbox"), "value"),
     Input(id("image-filepath"), "value"),
+    State(id("display-options"), "value"),
 )
 @timeit
-def handle_image_filepath_selection(image_filepath):
+def handle_image_filepath_selection(image_filepath, display_option):
     if not image_filepath:
         return {}, {}, {}
 
     print("Image filepath changed")
 
-    image = read_image(image_filepath, with_alpha=False)
-    masks = read_masks_for_image(image_filepath)
-    masks_image = get_masks_img(masks, image)[:, :, :3]
-    masks_trace = px.imshow(masks_image).data[0]
-
-    image_fig = go.Figure()
-    image_fig.update_layout(autosize=False, width=1024, height=1024)
-    image_fig.add_trace(masks_trace)
-
     labeled_masks = read_masks_features(image_filepath)
     print("read labeled_masks, shape", labeled_masks.shape)
     print(labeled_masks[[MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN]].head())
 
-    assert len(masks) == labeled_masks.shape[0], (
-        "Labels do not correspond to the masks."
-        "Probably you updated the masks."
-        "Consider removing {}".format(get_masks_features_filepath(image_filepath))
-    )
+    image_fig = image_with_masks_figure(image_filepath, display_option, labeled_masks)
 
     labeled_masks = labeled_masks[[MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN]]
 

@@ -1,21 +1,54 @@
+from enum import Enum
+import random
 import numpy as np
 
+from utils.generate_colors import generate_contrast_colors
 
-def get_masks_img(masks, image, opacity=0.35):
+
+class MasksColorOptions(Enum):
+    NONE = 1  # do not display masks
+    RANDOM = 2  # display each mask with random color
+    BY_LABEL = 3  # color is based on mask's label
+
+
+def get_masks_img(
+    masks,
+    image,
+    masks_color_option=MasksColorOptions.BY_LABEL,
+    color_by_mask_id=None,
+    opacity=0.35,
+):
+    if masks_color_option == MasksColorOptions.NONE:
+        return image
+
+    if masks_color_option == MasksColorOptions.BY_LABEL and color_by_mask_id is None:
+        raise ValueError(
+            "Color palette is not provided for labeled data display option"
+        )
+
     sorted_masks = sorted(masks, key=(lambda x: x["area"]), reverse=True)
 
-    for mask in sorted_masks:
+    if masks_color_option == MasksColorOptions.RANDOM:
+        colors = generate_contrast_colors(len(masks))
+        random.shuffle(colors)
+
+    for index, mask in enumerate(sorted_masks):
+        mask_id = mask["id"]
         (x, y, w, h) = mask["bbox"]
         x, y, w, h = int(x), int(y), int(w), int(h)
         segmentation = mask["segmentation"]
-        color_mask = (
-            np.array(mask["color"])
-            if "color" in mask
-            else np.random.randint(256, size=3)
-        )
+        if masks_color_option == MasksColorOptions.BY_LABEL:
+            if mask_id not in color_by_mask_id:
+                # Skip masks without defined color (e.g., if it's labeled as wrong).
+                continue
+            mask_color = np.array(color_by_mask_id[mask_id])
+        elif masks_color_option == MasksColorOptions.RANDOM:
+            mask_color = np.array(colors[index])
+        else:
+            raise ValueError("Invalid color")
 
         mask_region = image[y : y + h + 1, x : x + w + 1][segmentation]
-        blended_color = ((1 - opacity) * mask_region + opacity * color_mask).astype(int)
+        blended_color = ((1 - opacity) * mask_region + opacity * mask_color).astype(int)
         image[y : y + h + 1, x : x + w + 1][segmentation] = blended_color
 
     return image
