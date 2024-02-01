@@ -176,6 +176,7 @@ layout = dbc.Container(
             ],
         ),
         dcc.Store(id=id("labeled-masks")),
+        dcc.Store(id=id("modified-labels")),
         dcc.Store(id=id("figure-store")),
     ],
     fluid=True,
@@ -299,6 +300,7 @@ def image_with_masks_figure(
 
 @callback(
     Output(id("labeled-masks"), "data", allow_duplicate=True),
+    Output(id("modified-labels"), "data", allow_duplicate=True),
     Input({"type": id("radio-item"), "index": ALL}, "value"),
     State({"type": id("radio-item"), "index": ALL}, "id"),
     State(id("labeled-masks"), "data"),
@@ -308,15 +310,20 @@ def image_with_masks_figure(
 @timeit
 def update_label(labels, ids, labeled_masks: dict):
     labeled_masks = pd.DataFrame(labeled_masks)
+    modified_labels = []
     for label, id in zip(labels, ids):
         mask_id = id["index"]
 
-        labeled_masks.loc[
+        loc = labeled_masks.loc[
             labeled_masks[MASK_ID_COLUMN] == mask_id,
             [Y_COLUMN, LABELING_MODE_COLUMN],
-        ] = (label, LABELING_MANUAL)
+        ]
 
-    return labeled_masks.to_dict()
+        if loc[Y_COLUMN].values[0] != label:
+            modified_labels.append((mask_id, label, LABELING_MANUAL))
+            loc = (label, LABELING_MANUAL)
+
+    return labeled_masks.to_dict(), modified_labels
 
 
 @callback(
@@ -371,8 +378,25 @@ def show_all_masks(labeled_masks_dict, image_filepath):
 
 
 @callback(
+    Output(id("modified-labels"), "data", allow_duplicate=True),
+    Input(id("modified-labels"), "data"),
+    prevent_initial_call=True,
+)
+@timeit
+def handle_modified_labels(modified_labels):
+    if not modified_labels:
+        print("prevent update from modified labels")
+        raise PreventUpdate
+
+    print(modified_labels)
+
+    return []
+
+
+@callback(
     Output(id("clicked-pixel-coords"), "children"),
     Output(id("selected-masks"), "children"),
+    Output(id("modified-labels"), "data"),
     Input(id("canvas"), "clickData"),
     State(id("active-label"), "value"),
     State(id("labeled-masks"), "data"),
@@ -396,31 +420,35 @@ def handle_canvas_click(
 
     assert len(masks) == labeled_masks_df.shape[0]
 
+    modified_labels = []
     crops = []
     for mask in masks:
         mask_id = mask["id"]
-        if is_point_in_mask(x, y, mask):
-            label = active_label if len(crops) == 0 else LABEL_WRONG
-            crops.append(
-                (
-                    get_masked_crop(
-                        image,
-                        mask,
-                        xy_threshold=20,
-                        with_highlighting=True,
-                        color_mask=LABELS[label]["color"],
-                    ),
-                    get_masked_crop(
-                        image,
-                        mask,
-                        xy_threshold=20,
-                        with_highlighting=False,
-                        color_mask=LABELS[label]["color"],
-                    ),
-                    label,
-                    mask_id,
-                )
+        if not is_point_in_mask(x, y, mask):
+            continue
+
+        label = active_label if len(crops) == 0 else LABEL_WRONG
+        modified_labels.append((mask_id, label, LABELING_MANUAL))
+        crops.append(
+            (
+                get_masked_crop(
+                    image,
+                    mask,
+                    xy_threshold=20,
+                    with_highlighting=True,
+                    color_mask=LABELS[label]["color"],
+                ),
+                get_masked_crop(
+                    image,
+                    mask,
+                    xy_threshold=20,
+                    with_highlighting=False,
+                    color_mask=LABELS[label]["color"],
+                ),
+                label,
+                mask_id,
             )
+        )
 
     labels = list(LABELS.keys())
 
@@ -434,6 +462,7 @@ def handle_canvas_click(
     return (
         html.H3("x: {}, y: {}".format(x, y)),
         image_radio_items,
+        modified_labels,
     )
 
 
