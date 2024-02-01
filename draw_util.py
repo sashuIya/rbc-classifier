@@ -93,9 +93,9 @@ def get_masked_crop(
     crop = np.concatenate((crop, alpha_channel), axis=2)
 
     segmentation_threshold = np.zeros(crop.shape[:2], dtype=bool)
-    segmentation_threshold[
-        y - y0 : y - y0 + h + 1, x - x0 : x - x0 + w + 1
-    ] = segmentation
+    segmentation_threshold[y - y0 : y - y0 + h + 1, x - x0 : x - x0 + w + 1] = (
+        segmentation
+    )
 
     if with_highlighting:
         mask_region = crop[segmentation_threshold, :3]

@@ -1,7 +1,4 @@
-from functools import wraps
-import time
 from dash import (
-    Dash,
     html,
     ALL,
     dcc,
@@ -9,15 +6,12 @@ from dash import (
     Output,
     Input,
     State,
-    ctx,
     register_page,
-    MATCH,
     dash_table,
 )
 from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 from dash_util import id_factory
-from PIL import Image
 
 from pages.widgets.image_selector import (
     get_image_filepath_options,
@@ -28,9 +22,7 @@ from pages.widgets.image_selector import (
 import plotly.express as px
 import plotly.graph_objects as go
 
-import glob
 import base64
-import os
 
 import pandas as pd
 import numpy as np
@@ -41,7 +33,6 @@ from filepath_util import (
     read_images_metadata,
     read_masks_for_image,
     read_image,
-    get_rel_filepaths_from_subfolders,
     get_masks_features_filepath,
     read_masks_features,
     write_images_metadata,
@@ -595,9 +586,9 @@ def handle_run_classifier_button(n_clicks, classifier_model_filepath, image_file
         classifier_model_filepath,
     )
 
-    labeled_masks.loc[
-        labeled_masks[Y_COLUMN] == LABEL_UNLABELED, Y_COLUMN
-    ] = predictions
+    labeled_masks.loc[labeled_masks[Y_COLUMN] == LABEL_UNLABELED, Y_COLUMN] = (
+        predictions
+    )
 
     return labeled_masks.to_dict()
 
