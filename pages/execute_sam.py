@@ -1,40 +1,30 @@
-from dash import Dash, html, dcc, callback, Output, Input, State, ctx, register_page
-from dash.exceptions import PreventUpdate
-import dash_bootstrap_components as dbc
-from tqdm import tqdm
-from dash_util import id_factory
+import os
+import warnings
 
+import dash_bootstrap_components as dbc
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+from dash import Input, Output, State, callback, dcc, html, register_page
+from dash.exceptions import PreventUpdate
+from tqdm import tqdm
 
-import glob
-import base64
-import os
-
-import pandas as pd
-import numpy as np
-import cv2
-
-from sklearn.cluster import KMeans
-
-from draw_util import get_masks_img, draw_height_and_scale
+from dash_util import id_factory
+from draw_util import draw_height_and_scale, get_masks_img
 from filepath_util import (
-    read_masks_for_image,
-    read_image,
     get_rel_filepaths_from_subfolders,
+    read_image,
     read_images_metadata,
+    read_masks_for_image,
     write_masks_features,
 )
 from mask_util import (
+    compute_measure_features,
+    compute_resnet_features,
+    construct_features_dataframe,
     run_sam,
     save_masks,
-    compute_resnet_features,
-    compute_measure_features,
-    construct_features_dataframe,
 )
-
-import warnings
-
 from pages.widgets.image_selector import (
     image_selection_dropdown,
     is_completed,
@@ -341,7 +331,7 @@ def handle_run_for_all_button(
         suffix = suffix_for_masks_file(points_per_side)
 
     for image_filepath in tqdm(image_filepaths, desc="Running pipeline"):
-        print('Executing for', image_filepath)
+        print("Executing for", image_filepath)
 
         run_sam_for_image(
             metadata=metadata,

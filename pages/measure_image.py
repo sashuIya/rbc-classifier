@@ -1,19 +1,19 @@
 import dash
-from dash import Dash, html, dcc, callback, Output, Input, State, ctx
-from dash.exceptions import PreventUpdate
 import dash_daq as daq
-from dash_util import id_factory
 import pandas as pd
-
-from pages.widgets.image_selector import TIF_FILEPATHS, image_selection_dropdown, is_measured
-
-from draw_util import draw_height_and_scale
-
 import plotly.express as px
 import plotly.graph_objects as go
+from dash import Input, Output, State, callback, ctx, dcc, html
+from dash.exceptions import PreventUpdate
 
-from filepath_util import *
-
+from dash_util import id_factory
+from draw_util import draw_height_and_scale
+from filepath_util import read_image, read_images_metadata, write_images_metadata
+from pages.widgets.image_selector import (
+    TIF_FILEPATHS,
+    image_selection_dropdown,
+    is_measured,
+)
 
 id = id_factory("measure-image")
 dash.register_page(__name__, path="/", order=0)
@@ -95,7 +95,7 @@ layout = html.Div(
     Input(id("scale-x0"), "value"),
     Input(id("scale-x1"), "value"),
 )
-def handle_image_selection(image_filepath, height, micrometers, scale_x0, scale_x1):
+def handle_measurements_update(image_filepath, height, micrometers, scale_x0, scale_x1):
     image = read_image(image_filepath)
     image_fig = go.FigureWidget()
     image_fig.update_layout(autosize=False, width=1024, height=1024)

@@ -1,14 +1,14 @@
-from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
-import pickle
 import os
+import pickle
+
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
-
 import torch
 import torchvision.transforms as transforms
-from torch.utils.data import Dataset, DataLoader
-from torchvision.models import resnet50, ResNet50_Weights
+from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
+from torch.utils.data import DataLoader, Dataset
+from torchvision.models import ResNet50_Weights, resnet50
+from tqdm import tqdm
 
 from consts import (
     LABEL_UNLABELED,
@@ -16,7 +16,6 @@ from consts import (
     LABELING_MODE_COLUMN,
     MASK_ID_COLUMN,
 )
-
 from filepath_util import read_images_metadata
 
 DEVICE = "cuda"
