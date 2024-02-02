@@ -1,62 +1,58 @@
+import base64
+
+import cv2
+import dash_bootstrap_components as dbc
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 from dash import (
-    html,
     ALL,
-    dcc,
-    callback,
-    Output,
     Input,
+    Output,
     State,
-    register_page,
+    callback,
     dash_table,
+    dcc,
+    html,
+    register_page,
 )
 from dash.exceptions import PreventUpdate
-import dash_bootstrap_components as dbc
-from dash_util import id_factory
 
+from consts import (
+    # Labels (options of Y_COLUMN)
+    LABEL_UNLABELED,
+    LABEL_WRONG,
+    LABELING_APPROVED,
+    LABELING_AUTO,
+    LABELING_MANUAL,
+    # Labeling modes
+    LABELING_MODE_COLUMN,
+    MASK_ID_COLUMN,
+    # Features metadata
+    Y_COLUMN,
+)
+from dash_util import id_factory
+from draw_util import MasksColorOptions, get_masked_crop, get_masks_img
+from filepath_util import (
+    get_classifier_model_filepaths,
+    get_masks_features_filepath,
+    read_image,
+    read_images_metadata,
+    read_masks_features,
+    read_masks_for_image,
+    write_images_metadata,
+    write_masks_features,
+)
+from mask_util import is_point_in_mask
 from pages.widgets.image_selector import (
     get_image_filepath_options,
     image_selection_dropdown,
     is_completed,
 )
-
-import plotly.express as px
-import plotly.graph_objects as go
-
-import base64
-
-import pandas as pd
-import numpy as np
-import cv2
-
-from draw_util import MasksColorOptions, get_masks_img, get_masked_crop
-from filepath_util import (
-    read_images_metadata,
-    read_masks_for_image,
-    read_image,
-    get_masks_features_filepath,
-    read_masks_features,
-    write_images_metadata,
-    write_masks_features,
-    get_classifier_model_filepaths,
-)
-from mask_util import is_point_in_mask
 from train_classifier import (
-    train_pipeline,
     classify,
-)
-
-from consts import (
-    # Features metadata
-    Y_COLUMN,
-    MASK_ID_COLUMN,
-    # Labeling modes
-    LABELING_MODE_COLUMN,
-    LABELING_MANUAL,
-    LABELING_APPROVED,
-    LABELING_AUTO,
-    # Labels (options of Y_COLUMN)
-    LABEL_UNLABELED,
-    LABEL_WRONG,
+    train_pipeline,
 )
 from utils.timing import timeit
 
@@ -72,6 +68,9 @@ DISPLAY_OPTIONS = [
     DISPLAY_LABELED_DATA,
     DISPLAY_UNLABELED_DATA,
 ]
+
+ALL_MASKS_RADIO_BUTTONS_PREFIX = "all-masks"
+SELECTED_MASKS_RADIO_BUTTONS_PREFIX = "selected-masks"
 
 
 def masks_display_option(display_option: str) -> MasksColorOptions:
@@ -212,9 +211,42 @@ def crop_html(crop):
     return crop_html
 
 
+def generate_labeled_mask_preview_info(
+    image: np.array, mask: dict, label: str
+) -> tuple[np.array, np.array, str, str]:
+    """Generates a preview of the given `mask` labeled with the given `label`.
+
+    Args:
+        image (np.array): Image to crop.
+        mask (dict): A mask from SAM.
+        label (str): label of the mask.
+
+    Returns:
+        tuple: (highlited crop, original crop, label, mask_id)
+    """
+    return (
+        get_masked_crop(
+            image,
+            mask,
+            xy_threshold=20,
+            with_highlighting=True,
+            color_mask=LABELS[label]["color"],
+        ),
+        get_masked_crop(
+            image,
+            mask,
+            xy_threshold=20,
+            with_highlighting=False,
+            color_mask=LABELS[label]["color"],
+        ),
+        label,
+        mask["id"],
+    )
+
+
 def generate_crop_with_radio(
-    crop_with_highlighting, original_crop, mask_id, labels, label
-):
+    id_prefix, crop_with_highlighting, original_crop, mask_id, labels, label
+) -> dbc.Form:
     return dbc.Form(
         [
             dbc.Row(
@@ -222,7 +254,10 @@ def generate_crop_with_radio(
                     dbc.Col(
                         html.Div(
                             "mask_id: {}".format(mask_id),
-                            id={"type": id("mask-id-div"), "index": mask_id},
+                            id={
+                                "type": id(f"{id_prefix}-mask-id-div"),
+                                "index": mask_id,
+                            },
                         ),
                     ),
                     dbc.Col(
@@ -237,7 +272,10 @@ def generate_crop_with_radio(
                         dbc.RadioItems(
                             options=labels,
                             value=label,
-                            id={"type": id("radio-item"), "index": mask_id},
+                            id={
+                                "type": id(f"{id_prefix}-radio-item"),
+                                "index": mask_id,
+                            },
                             inline=False,
                             className="ml-3",
                         )
@@ -251,6 +289,32 @@ def generate_crop_with_radio(
             ),
         ],
     )
+
+
+def generate_labeled_masks_previews(
+    radio_buttons_prefix: str,
+    labeled_mask_preview_infos: list[tuple[np.array, np.array, str, str]],
+) -> list[dbc.Form]:
+    labels = list(LABELS.keys())
+
+    image_radio_items = []
+    for (
+        crop_with_highlighting,
+        original_crop,
+        label,
+        mask_id,
+    ) in labeled_mask_preview_infos:
+        image_radio_item = generate_crop_with_radio(
+            radio_buttons_prefix,
+            crop_with_highlighting,
+            original_crop,
+            mask_id,
+            labels,
+            label,
+        )
+        image_radio_items.append(image_radio_item)
+
+    return image_radio_items
 
 
 def image_with_masks_figure(
@@ -291,15 +355,41 @@ def image_with_masks_figure(
 
 @callback(
     Output(id("labeled-masks"), "data", allow_duplicate=True),
+    Input(id("modified-labels"), "data"),
+    State(id("labeled-masks"), "data"),
+    prevent_initial_call=True,
+)
+@timeit
+def update_labeled_masks(modified_labels, labeled_masks: dict):
+    if not modified_labels:
+        raise PreventUpdate
+
+    labeled_masks = pd.DataFrame(labeled_masks)
+
+    for mask_id, new_label, new_labeling_mode in modified_labels:
+        labeled_masks.loc[
+            labeled_masks[MASK_ID_COLUMN] == mask_id,
+            [Y_COLUMN, LABELING_MODE_COLUMN],
+        ] = (new_label, new_labeling_mode)
+
+    return labeled_masks.to_dict()
+
+
+@callback(
     Output(id("modified-labels"), "data", allow_duplicate=True),
-    Input({"type": id("radio-item"), "index": ALL}, "value"),
-    State({"type": id("radio-item"), "index": ALL}, "id"),
+    Input(
+        {"type": id(f"{ALL_MASKS_RADIO_BUTTONS_PREFIX}-radio-item"), "index": ALL},
+        "value",
+    ),
+    State(
+        {"type": id(f"{ALL_MASKS_RADIO_BUTTONS_PREFIX}-radio-item"), "index": ALL}, "id"
+    ),
     State(id("labeled-masks"), "data"),
     prevent_initial_call=True,
     suppress_callback_exceptions=True,
 )
 @timeit
-def update_label(labels, ids, labeled_masks: dict):
+def handle_all_masks_radio_button_click(labels, ids, labeled_masks: dict):
     labeled_masks = pd.DataFrame(labeled_masks)
     modified_labels = []
     for label, id in zip(labels, ids):
@@ -314,74 +404,40 @@ def update_label(labels, ids, labeled_masks: dict):
             modified_labels.append((mask_id, label, LABELING_MANUAL))
             loc = (label, LABELING_MANUAL)
 
-    return labeled_masks.to_dict(), modified_labels
-
-
-@callback(
-    Output(id("all-masks"), "children"),
-    Input(id("labeled-masks"), "data"),
-    State(id("image-filepath"), "value"),
-)
-@timeit
-def show_all_masks(labeled_masks_dict, image_filepath):
-    labeled_masks_df = pd.DataFrame(labeled_masks_dict)
-
-    image = read_image(image_filepath)
-    masks = read_masks_for_image(image_filepath)
-
-    assert len(masks) == labeled_masks_df.shape[0]
-
-    crops = []
-    for (_, row), mask in zip(labeled_masks_df.iterrows(), masks):
-        assert mask["id"] == row[MASK_ID_COLUMN]
-        label = row[Y_COLUMN]
-        crops.append(
-            (
-                get_masked_crop(
-                    image,
-                    mask,
-                    xy_threshold=20,
-                    with_highlighting=True,
-                    color_mask=LABELS[label]["color"],
-                ),
-                get_masked_crop(
-                    image,
-                    mask,
-                    xy_threshold=20,
-                    with_highlighting=False,
-                    color_mask=LABELS[label]["color"],
-                ),
-                row[Y_COLUMN],
-                row[MASK_ID_COLUMN],
-            )
-        )
-
-    labels = list(LABELS.keys())
-
-    image_radio_items = []
-    for crop_with_highlighting, original_crop, label, mask_id in crops:
-        image_radio_item = generate_crop_with_radio(
-            crop_with_highlighting, original_crop, mask_id, labels, label
-        )
-        image_radio_items.append(image_radio_item)
-
-    return image_radio_items
+    return modified_labels
 
 
 @callback(
     Output(id("modified-labels"), "data", allow_duplicate=True),
-    Input(id("modified-labels"), "data"),
+    Input(
+        {"type": id(f"{SELECTED_MASKS_RADIO_BUTTONS_PREFIX}-radio-item"), "index": ALL},
+        "value",
+    ),
+    State(
+        {"type": id(f"{SELECTED_MASKS_RADIO_BUTTONS_PREFIX}-radio-item"), "index": ALL},
+        "id",
+    ),
+    State(id("labeled-masks"), "data"),
     prevent_initial_call=True,
+    suppress_callback_exceptions=True,
 )
 @timeit
-def handle_modified_labels(modified_labels):
-    if not modified_labels:
-        print("prevent update from modified labels")
-        raise PreventUpdate
+def handle_selected_masks_radio_button_click(labels, ids, labeled_masks: dict):
+    labeled_masks = pd.DataFrame(labeled_masks)
+    modified_labels = []
+    for label, id in zip(labels, ids):
+        mask_id = id["index"]
 
-    print(modified_labels)
+        loc = labeled_masks.loc[
+            labeled_masks[MASK_ID_COLUMN] == mask_id,
+            [Y_COLUMN, LABELING_MODE_COLUMN],
+        ]
 
-    return []
+        if loc[Y_COLUMN].values[0] != label:
+            modified_labels.append((mask_id, label, LABELING_MANUAL))
+            loc = (label, LABELING_MANUAL)
+
+    return modified_labels
 
 
 @callback(
@@ -412,47 +468,23 @@ def handle_canvas_click(
     assert len(masks) == labeled_masks_df.shape[0]
 
     modified_labels = []
-    crops = []
+    clicked_crop_infos = []
     for mask in masks:
         mask_id = mask["id"]
         if not is_point_in_mask(x, y, mask):
             continue
 
-        label = active_label if len(crops) == 0 else LABEL_WRONG
+        label = active_label if len(clicked_crop_infos) == 0 else LABEL_WRONG
         modified_labels.append((mask_id, label, LABELING_MANUAL))
-        crops.append(
-            (
-                get_masked_crop(
-                    image,
-                    mask,
-                    xy_threshold=20,
-                    with_highlighting=True,
-                    color_mask=LABELS[label]["color"],
-                ),
-                get_masked_crop(
-                    image,
-                    mask,
-                    xy_threshold=20,
-                    with_highlighting=False,
-                    color_mask=LABELS[label]["color"],
-                ),
-                label,
-                mask_id,
-            )
+        clicked_crop_infos.append(
+            generate_labeled_mask_preview_info(image, mask, label)
         )
-
-    labels = list(LABELS.keys())
-
-    image_radio_items = []
-    for crop_with_highlighting, original_crop, label, mask_id in crops:
-        image_radio_item = generate_crop_with_radio(
-            crop_with_highlighting, original_crop, mask_id, labels, label
-        )
-        image_radio_items.append(image_radio_item)
 
     return (
         html.H3("x: {}, y: {}".format(x, y)),
-        image_radio_items,
+        generate_labeled_masks_previews(
+            SELECTED_MASKS_RADIO_BUTTONS_PREFIX, clicked_crop_infos
+        ),
         modified_labels,
     )
 
@@ -521,6 +553,7 @@ def perform_canvas_change(display_option, labeled_masks_dict, image_filepath):
 @callback(
     Output(id("labeled-masks"), "data"),
     Output(id("completed-checkbox"), "value"),
+    Output(id("all-masks"), "children"),
     Input(id("image-filepath"), "value"),
 )
 @timeit
@@ -530,11 +563,13 @@ def handle_image_filepath_selection(image_filepath):
 
     print("Image filepath changed")
 
-    labeled_masks = read_masks_features(image_filepath)
-    print("read labeled_masks, shape", labeled_masks.shape)
-    print(labeled_masks[[MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN]].head())
+    labeled_masks_df = read_masks_features(image_filepath)
+    print("read labeled_masks, shape", labeled_masks_df.shape)
+    print(labeled_masks_df[[MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN]].head())
 
-    labeled_masks = labeled_masks[[MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN]]
+    labeled_masks_df = labeled_masks_df[
+        [MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN]
+    ]
 
     images_metadata = read_images_metadata()
     completed = (
@@ -544,9 +579,25 @@ def handle_image_filepath_selection(image_filepath):
         ].iloc[0]
     )
 
+    image = read_image(image_filepath)
+    masks = read_masks_for_image(image_filepath)
+    assert len(masks) == labeled_masks_df.shape[0]
+
+    crop_infos = []
+    for (_, row), mask in zip(labeled_masks_df.iterrows(), masks):
+        assert mask["id"] == row[MASK_ID_COLUMN]
+        crop_infos.append(
+            generate_labeled_mask_preview_info(image, mask, row[Y_COLUMN])
+        )
+
+    all_mask_previews = generate_labeled_masks_previews(
+        ALL_MASKS_RADIO_BUTTONS_PREFIX, crop_infos
+    )
+
     return (
-        labeled_masks.to_dict(),
+        labeled_masks_df.to_dict(),
         [CHECKBOX_COMPLETED] if completed else [],
+        all_mask_previews,
     )
 
 
