@@ -18,6 +18,7 @@ from dash import (
     register_page,
 )
 from dash.exceptions import PreventUpdate
+from skimage import measure
 
 from consts import (
     # Labels (options of Y_COLUMN)
@@ -317,6 +318,64 @@ def generate_labeled_masks_previews(
     return image_radio_items
 
 
+@timeit
+def image_with_masks_figure_as_scatters(
+    image_filepath: str, display_option: str, labels_df: pd.DataFrame
+) -> go.Figure:
+    image = read_image(image_filepath, with_alpha=False)
+    fig = px.imshow(image, binary_string=True, binary_backend="jpg")
+    fig.update_layout(autosize=False, width=1024, height=1024)
+
+    masks = read_masks_for_image(image_filepath)
+
+    assert len(masks) == labels_df.shape[0], (
+        "Labels do not correspond to the masks."
+        "Probably you updated the masks."
+        "Consider removing {}".format(get_masks_features_filepath(image_filepath))
+    )
+
+    color_by_mask_id = dict()
+    for _, row in labels_df.iterrows():
+        mask_id, label = row[MASK_ID_COLUMN], row[Y_COLUMN]
+        if label in [LABEL_UNLABELED, LABEL_WRONG]:
+            continue
+        color_by_mask_id[mask_id] = LABELS[label]["color"]
+
+    for mask in masks:
+        mask_id = mask["id"]
+        if mask_id not in color_by_mask_id:
+            continue
+
+        mask_reformed = mask["segmentation"][:, :].astype("uint8")
+        contours, _ = cv2.findContours(
+            mask_reformed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+
+        def rgb2rgb(rgb):
+            r, g, b = rgb
+            return "rgb({}, {}, {})".format(r, g, b)
+
+        for contour_index in range(len(contours)):
+            contour = contours[contour_index].reshape(-1, 2)
+            x, y = contour.T
+            (x0, y0, _, _) = mask["bbox"]
+            x += int(x0)
+            y += int(y0)
+
+            fig.add_scatter(
+                x=x,
+                y=y,
+                name=mask_id,
+                opacity=0.35,
+                mode="markers",
+                line=dict(color=rgb2rgb(color_by_mask_id[mask_id]), width=1),
+                hoverinfo="none",
+                fill="toself",
+            )
+
+    return fig
+
+
 def image_with_masks_figure(
     image_filepath: str, display_option: str, labels_df: pd.DataFrame
 ) -> go.Figure:
@@ -336,7 +395,6 @@ def image_with_masks_figure(
             continue
         color_by_mask_id[mask_id] = LABELS[label]["color"]
 
-    masks = read_masks_for_image(image_filepath)
     image = get_masks_img(
         masks,
         image,
@@ -547,6 +605,7 @@ def perform_canvas_change(display_option, labeled_masks_dict, image_filepath):
 
     labeled_masks_df = pd.DataFrame(labeled_masks_dict)
 
+    # ? Maybe use `image_with_masks_figure_as_scatters` instead?
     return image_with_masks_figure(image_filepath, display_option, labeled_masks_df)
 
 
