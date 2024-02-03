@@ -1,4 +1,5 @@
 import base64
+import os
 
 import cv2
 import dash_bootstrap_components as dbc
@@ -18,6 +19,7 @@ from dash import (
     register_page,
 )
 from dash.exceptions import PreventUpdate
+from PIL import Image
 from skimage import measure
 
 from consts import (
@@ -172,6 +174,17 @@ layout = dbc.Container(
     ],
     fluid=True,
 )
+
+
+def create_color_by_mask_id(labels_df):
+    color_by_mask_id = dict()
+    for _, row in labels_df.iterrows():
+        mask_id, label = row[MASK_ID_COLUMN], row[Y_COLUMN]
+        if label in [LABEL_UNLABELED, LABEL_WRONG]:
+            continue
+        color_by_mask_id[mask_id] = LABELS[label]["color"]
+
+    return color_by_mask_id
 
 
 # Creates Plotly image trace function with caching (Optimized).
@@ -335,13 +348,7 @@ def image_with_masks_figure_as_scatters(
         "Consider removing {}".format(get_masks_features_filepath(image_filepath))
     )
 
-    color_by_mask_id = dict()
-    for _, row in labels_df.iterrows():
-        mask_id, label = row[MASK_ID_COLUMN], row[Y_COLUMN]
-        if label in [LABEL_UNLABELED, LABEL_WRONG]:
-            continue
-        color_by_mask_id[mask_id] = LABELS[label]["color"]
-
+    color_by_mask_id = create_color_by_mask_id(labels_df)
     for mask in masks:
         mask_id = mask["id"]
         if mask_id not in color_by_mask_id:
@@ -389,13 +396,7 @@ def image_with_masks_figure(
         "Consider removing {}".format(get_masks_features_filepath(image_filepath))
     )
 
-    color_by_mask_id = dict()
-    for _, row in labels_df.iterrows():
-        mask_id, label = row[MASK_ID_COLUMN], row[Y_COLUMN]
-        if label in [LABEL_UNLABELED, LABEL_WRONG]:
-            continue
-        color_by_mask_id[mask_id] = LABELS[label]["color"]
-
+    color_by_mask_id = create_color_by_mask_id(labels_df)
     image = get_masks_img(
         masks,
         image,
@@ -555,24 +556,46 @@ def handle_canvas_click(
     State(id("image-filepath"), "value"),
 )
 @timeit
-def handle_save_labels_button_click(n_clicks, labeled_masks, image_filepath):
-    if n_clicks == 0 or not labeled_masks:
+def handle_save_labels_button_click(n_clicks, labeled_masks_df, image_filepath):
+    if n_clicks == 0 or not labeled_masks_df:
         raise PreventUpdate
 
-    labeled_masks = pd.DataFrame(labeled_masks)
+    labeled_masks_df = pd.DataFrame(labeled_masks_df)
 
-    labeled_masks.loc[
-        (labeled_masks[Y_COLUMN] != LABEL_UNLABELED)
+    labeled_masks_df.loc[
+        (labeled_masks_df[Y_COLUMN] != LABEL_UNLABELED)
         # & (labeled_masks[Y_COLUMN] != LABEL_WRONG)
-        & (labeled_masks[LABELING_MODE_COLUMN] == LABELING_AUTO),
+        & (labeled_masks_df[LABELING_MODE_COLUMN] == LABELING_AUTO),
         LABELING_MODE_COLUMN,
     ] = LABELING_APPROVED
 
     masks_features = read_masks_features(image_filepath)
-    labeled_masks.index = masks_features.index
-    masks_features[labeled_masks.columns] = labeled_masks
+    labeled_masks_df.index = masks_features.index
+    masks_features[labeled_masks_df.columns] = labeled_masks_df
 
     write_masks_features(masks_features, image_filepath)
+
+    image = read_image(image_filepath)
+    masks = read_masks_for_image(image_filepath)
+    color_by_mask_id = create_color_by_mask_id(labeled_masks_df)
+    image = get_masks_img(
+        masks,
+        image,
+        masks_color_option=MasksColorOptions.BY_LABEL,
+        color_by_mask_id=color_by_mask_id,
+    )
+
+    result_filepath_base = os.path.splitext(image_filepath)[0] + "_result"
+    image_result_filepath = result_filepath_base + ".tif"
+    assert image_result_filepath != image_filepath
+    pillow_image = Image.fromarray(image.astype(np.uint8))
+    pillow_image.save(image_result_filepath, compression="tiff_lzw")
+
+    label_counts = labeled_masks_df[Y_COLUMN].value_counts().reset_index()
+    label_counts.columns = ["Label", "Count"]
+    label_counts.to_csv(
+        result_filepath_base + "_label_counts.tsv", sep="\t", index=False
+    )
 
     return {}
 
