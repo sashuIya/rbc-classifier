@@ -89,9 +89,9 @@ def masks_display_option(display_option: str) -> MasksColorOptions:
 LABELS = {
     LABEL_UNLABELED: {"color": np.array([204, 0, 255])},
     LABEL_WRONG: {"color": np.array([203, 255, 0])},
-    "0": {"color": np.array([255, 0, 0])},
-    "1": {"color": np.array([0, 255, 102])},
-    "2": {"color": np.array([0, 101, 255])},
+    "red blood cell": {"color": np.array([255, 0, 0])},
+    "spheroid cell": {"color": np.array([0, 255, 102])},
+    "echinocyte": {"color": np.array([0, 101, 255])},
 }
 
 id = id_factory("label-cells")
@@ -152,7 +152,9 @@ layout = dbc.Container(
                         style_table={"width": "10%"},  # Adjust the percentage as needed
                     ),
                     html.Div(style={"padding": "20px"}),
-                    dcc.RadioItems(list(LABELS.keys()), "0", id=id("active-label")),
+                    dcc.RadioItems(
+                        list(LABELS.keys()), "red blood cell", id=id("active-label")
+                    ),
                 ],
             )
         ),

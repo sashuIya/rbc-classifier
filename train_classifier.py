@@ -1,44 +1,36 @@
 import matplotlib
 
 matplotlib.use("Agg")  # 'Agg' backend is suitable for saving figures to files
+import faiss
 import matplotlib.pyplot as plt
-
-import pandas as pd
 import numpy as np
-from tqdm import tqdm
-
+import pandas as pd
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader, TensorDataset
-
+import torch.optim as optim
 from pytorch_metric_learning import distances, losses, miners, reducers, testers
 from pytorch_metric_learning.utils.accuracy_calculator import AccuracyCalculator
-
-from filepath_util import (
-    read_masks_features,
-    read_embedder_and_faiss,
-    write_embedder_and_faiss,
-    read_labeled_and_reviewed_features_for_all_images,
-)
-
-from sklearn.model_selection import train_test_split
-from sklearn import preprocessing
-from sklearn.svm import SVC
-from sklearn.metrics import accuracy_score
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.manifold import TSNE
-
-import faiss
-
 from scipy.stats import mode
-
+from sklearn import preprocessing
+from sklearn.manifold import TSNE
+from sklearn.metrics import accuracy_score
+from sklearn.model_selection import train_test_split
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.svm import SVC
+from torch.utils.data import DataLoader, Dataset, TensorDataset
+from tqdm import tqdm
 
 from consts import (
+    LABEL_UNLABELED,
     X_COLUMN_PREFIX,
     Y_COLUMN,
-    LABEL_UNLABELED,
+)
+from filepath_util import (
+    read_embedder_and_faiss,
+    read_labeled_and_reviewed_features_for_all_images,
+    read_masks_features,
+    write_embedder_and_faiss,
 )
 
 DEVICE = "cuda"
@@ -292,7 +284,7 @@ def classify(df, classifier_model_filepath):
     predicted_labels = []
 
     for i in range(embeddings_to_classify.shape[0]):
-        query_embedding = embeddings_to_classify[i:i+1]
+        query_embedding = embeddings_to_classify[i : i + 1]
 
         # Perform a similarity search to find nearest neighbors
         distances, indices = faiss_index.search(query_embedding.astype(np.float32), k)
@@ -306,6 +298,14 @@ def classify(df, classifier_model_filepath):
         print(f"Embedding {i + 1} Classified Label: {classified_label}")
 
     decoded_predicted_labels = label_encoder.inverse_transform(predicted_labels)
+    # ! TODO: Remove this once a new classifier is trained (after 02/03/2024).
+    for i, label in enumerate(decoded_predicted_labels):
+        if label == "0":
+            decoded_predicted_labels[i] = "red blood cell"
+        if label == "1":
+            decoded_predicted_labels[i] = "spheroid cell"
+        if label == "2":
+            decoded_predicted_labels[i] = "echinocyte"
 
     # Use numpy.unique() to get unique elements and their counts
     unique_elements, counts = np.unique(decoded_predicted_labels, return_counts=True)
