@@ -1,5 +1,6 @@
-from enum import Enum
 import random
+from enum import Enum
+
 import numpy as np
 
 from utils.generate_colors import generate_contrast_colors
@@ -33,11 +34,11 @@ def get_masks_img(
         random.shuffle(colors)
 
     for index, mask in enumerate(sorted_masks):
-        mask_id = mask["id"]
         (x, y, w, h) = mask["bbox"]
         x, y, w, h = int(x), int(y), int(w), int(h)
         segmentation = mask["segmentation"]
         if masks_color_option == MasksColorOptions.BY_LABEL:
+            mask_id = mask["id"]
             if mask_id not in color_by_mask_id:
                 # Skip masks without defined color (e.g., if it's labeled as wrong).
                 continue

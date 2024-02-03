@@ -7,10 +7,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 from dash import Input, Output, State, callback, dcc, html, register_page
 from dash.exceptions import PreventUpdate
+from skimage import measure
 from tqdm import tqdm
 
 from dash_util import id_factory
-from draw_util import draw_height_and_scale, get_masks_img
+from draw_util import MasksColorOptions, draw_height_and_scale, get_masks_img
 from filepath_util import (
     get_rel_filepaths_from_subfolders,
     read_image,
@@ -168,7 +169,7 @@ def handle_image_filepath_selection(image_filepath, grid_size):
 
 
 def figure_widget_for_image_and_masks(image, masks):
-    masks_image = get_masks_img(masks, image)[:, :, :3]
+    masks_image = get_masks_img(masks, image, MasksColorOptions.RANDOM)[:, :, :3]
     masks_trace = px.imshow(masks_image).data[0]
 
     image_and_masks_fig = go.FigureWidget()
@@ -186,9 +187,11 @@ def run_sam_for_image(
     points_per_side,
     points_per_side_as_suffix: list,
 ):
-    image_height_adjustment = int(
-        metadata.loc[metadata["filepath"] == image_filepath, "height"].values[0]
-    )
+    image_height_adjustment, scale_x0, scale_x1, micrometers = metadata.loc[
+        metadata["filepath"] == image_filepath,
+        ["height", "scale_x0", "scale_x1", "micrometers"],
+    ].values[0]
+    image_height_adjustment = int(image_height_adjustment)
     image = read_image(image_filepath, with_alpha=False)
     masks = run_sam(
         image[:image_height_adjustment, :, :],
@@ -196,6 +199,23 @@ def run_sam_for_image(
         crop_n_layers=crop_n_layers,
         points_per_side=points_per_side,
     )
+
+    def area_predicate(mask):
+        HOLE_SIZE_MICROMETERS_SQ = 4.0  # μm^2
+        pixels_sq_to_microm_sq_coeff = (micrometers / (scale_x1 - scale_x0)) ** 2
+        return pixels_sq_to_microm_sq_coeff * mask["area"] > HOLE_SIZE_MICROMETERS_SQ
+
+    masks = [mask for mask in masks if area_predicate(mask)]
+    print("Number of masks after filtering by area: {}".format(len(masks)))
+
+    def connected_components_predicate(mask):
+        _, labels_num = measure.label(
+            mask["segmentation"], return_num=True, connectivity=2
+        )
+        return labels_num == 1
+
+    masks = [mask for mask in masks if connected_components_predicate(mask)]
+    print("Number of masks after filtering by connectivity: {}".format(len(masks)))
 
     suffix = ""
     if USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION in points_per_side_as_suffix:

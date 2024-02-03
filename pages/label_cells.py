@@ -214,7 +214,7 @@ def crop_html(crop):
 
 def generate_labeled_mask_preview_info(
     image: np.array, mask: dict, label: str
-) -> tuple[np.array, np.array, str, str]:
+) -> tuple[np.array, np.array, str, dict]:
     """Generates a preview of the given `mask` labeled with the given `label`.
 
     Args:
@@ -223,7 +223,7 @@ def generate_labeled_mask_preview_info(
         label (str): label of the mask.
 
     Returns:
-        tuple: (highlited crop, original crop, label, mask_id)
+        tuple: (highlited crop, original crop, label, mask)
     """
     return (
         get_masked_crop(
@@ -241,20 +241,21 @@ def generate_labeled_mask_preview_info(
             color_mask=LABELS[label]["color"],
         ),
         label,
-        mask["id"],
+        mask,
     )
 
 
 def generate_crop_with_radio(
-    id_prefix, crop_with_highlighting, original_crop, mask_id, labels, label
+    id_prefix, crop_with_highlighting, original_crop, labels, label, mask
 ) -> dbc.Form:
+    mask_id = mask["id"]
     return dbc.Form(
         [
             dbc.Row(
                 [
                     dbc.Col(
                         html.Div(
-                            "mask_id: {}".format(mask_id),
+                            "mask_id: {}, area: {}".format(mask_id, mask["area"]),
                             id={
                                 "type": id(f"{id_prefix}-mask-id-div"),
                                 "index": mask_id,
@@ -294,7 +295,7 @@ def generate_crop_with_radio(
 
 def generate_labeled_masks_previews(
     radio_buttons_prefix: str,
-    labeled_mask_preview_infos: list[tuple[np.array, np.array, str, str]],
+    labeled_mask_preview_infos: list[tuple[np.array, np.array, str, dict]],
 ) -> list[dbc.Form]:
     labels = list(LABELS.keys())
 
@@ -303,15 +304,15 @@ def generate_labeled_masks_previews(
         crop_with_highlighting,
         original_crop,
         label,
-        mask_id,
+        mask,
     ) in labeled_mask_preview_infos:
         image_radio_item = generate_crop_with_radio(
             radio_buttons_prefix,
             crop_with_highlighting,
             original_crop,
-            mask_id,
             labels,
             label,
+            mask,
         )
         image_radio_items.append(image_radio_item)
 
