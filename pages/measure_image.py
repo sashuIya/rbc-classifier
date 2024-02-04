@@ -1,4 +1,5 @@
 import dash
+import dash_bootstrap_components as dbc
 import dash_daq as daq
 import pandas as pd
 import plotly.express as px
@@ -69,10 +70,20 @@ layout = html.Div(
                 ),
                 html.Div(style={"padding-bottom": "20px"}),
                 #
-                html.Button("Save metadata", id=id("save-metadata")),
+                dbc.Button(
+                    "Save metadata",
+                    color="primary",
+                    className="me-1",
+                    id=id("save-metadata"),
+                ),
                 html.Div(style={"padding-bottom": "20px"}),
                 #
-                html.Button("Next image", id=id("next-image-button")),
+                dbc.Button(
+                    "Next image",
+                    color="primary",
+                    className="me-1",
+                    id=id("next-image-button"),
+                ),
             ],
             style={"display": "inline-block", "margin-right": "200px"},
         ),

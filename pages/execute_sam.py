@@ -80,14 +80,22 @@ layout = dbc.Container(
                     html.Div(style={"padding": "20px"}),
                     html.Div("Image height without scaling:", id=id("image-height")),
                     html.Div(style={"padding": "20px"}),
-                    html.Button("Run SAM", id=id("run-sam-button"), n_clicks=0),
+                    dbc.Button(
+                        "Run SAM",
+                        color="primary",
+                        className="me-1",
+                        id=id("run-sam-button"),
+                        n_clicks=0,
+                    ),
                     dcc.Checklist(
                         [USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION],
                         value=[USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION],
                         id=id("grid-size-as-suffix"),
                     ),
-                    html.Button(
+                    dbc.Button(
                         "Compute and save features",
+                        color="primary",
+                        className="me-1",
                         id=id("compute-features-button"),
                         n_clicks=0,
                     ),
@@ -97,8 +105,10 @@ layout = dbc.Container(
                         color="danger",
                         is_open=False,
                     ),
-                    html.Button(
+                    dbc.Button(
                         "Run SAM and compute features for all not-completed",
+                        color="primary",
+                        className="me-1",
                         id=id("run-for-all-button"),
                         n_clicks=0,
                     ),

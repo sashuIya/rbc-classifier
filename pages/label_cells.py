@@ -121,19 +121,23 @@ layout = dbc.Container(
                         CLASSIFIER_MODEL_FILEPATHS[0],
                         id=id("classifier-model"),
                     ),
-                    html.Button(
+                    dbc.Button(
                         "Train classifier on labeled data",
                         id=id("train-classifier-button"),
+                        className="me-1",
                         n_clicks=0,
                     ),
-                    html.Button(
+                    dbc.Button(
                         "Run classifier",
                         id=id("run-classifier-button"),
+                        className="me-1",
                         n_clicks=0,
                     ),
-                    html.Button(
+                    dbc.Button(
                         "Save masks",
+                        color="warning",
                         id=id("save-labels-button"),
+                        className="me-1",
                         n_clicks=0,
                     ),
                     dcc.Checklist([CHECKBOX_COMPLETED], id=id("completed-checkbox")),
