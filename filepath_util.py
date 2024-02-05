@@ -22,9 +22,11 @@ LABELS_METADATA_FILEPATH = os.path.normpath("dataset/labels_metadata.csv")
 CLASSIFIER_CHECKPOINT_DIR = "model/cells_classifier/"
 
 
-def get_rel_filepaths_from_subfolders(folder_path, extension):
+def get_rel_filepaths_from_subfolders(folder_path, extension, exclude=None):
     search_pattern = folder_path + "/**/*.{}".format(extension)
     filepaths = glob.glob(search_pattern, recursive=True)
+    if exclude is not None:
+        filepaths = [filepath for filepath in filepaths if exclude not in filepath]
     return filepaths
 
 

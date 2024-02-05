@@ -1,10 +1,12 @@
 import os
+
+from dash import dcc, html
+
 from filepath_util import get_rel_filepaths_from_subfolders, read_images_metadata
-from dash import html, dcc
 
 _IMAGES_PATH = os.path.normpath("./dataset/")
 TIF_FILEPATHS = get_rel_filepaths_from_subfolders(
-    folder_path=_IMAGES_PATH, extension="tif"
+    folder_path=_IMAGES_PATH, extension="tif", exclude="result"
 )
 
 
@@ -32,9 +34,9 @@ def get_image_filepath_options(predicate_fn):
                 "label": html.Span(
                     [filepath],
                     style={
-                        "background-color": "palegreen"
-                        if predicate_value
-                        else "moccasin"
+                        "background-color": (
+                            "palegreen" if predicate_value else "moccasin"
+                        )
                     },
                 ),
                 "value": filepath,
