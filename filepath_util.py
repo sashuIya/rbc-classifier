@@ -1,20 +1,23 @@
+import datetime
+import glob
 import os
 import pickle
+
 import cv2
-import glob
+import faiss
 import pandas as pd
 import torch
-import datetime
-from consts import (
-    Y_COLUMN,
-    LABELING_MODE_COLUMN,
-    LABEL_UNLABELED,
-    LABELING_MANUAL,
-    LABELING_APPROVED,
-)
-import faiss
 
-METADATA_FILEPATH = os.path.normpath("dataset/images_metadata.csv")
+from consts import (
+    LABEL_UNLABELED,
+    LABELING_APPROVED,
+    LABELING_MANUAL,
+    LABELING_MODE_COLUMN,
+    Y_COLUMN,
+)
+
+IMAGES_METADATA_FILEPATH = os.path.normpath("dataset/images_metadata.csv")
+LABELS_METADATA_FILEPATH = os.path.normpath("dataset/labels_metadata.csv")
 
 CLASSIFIER_CHECKPOINT_DIR = "model/cells_classifier/"
 
@@ -61,14 +64,14 @@ def write_masks_features(
 
 
 def read_images_metadata():
-    if not os.path.exists(METADATA_FILEPATH):
+    if not os.path.exists(IMAGES_METADATA_FILEPATH):
         return pd.DataFrame(columns=["filepath"])
 
-    return pd.read_csv(METADATA_FILEPATH, index_col=None)
+    return pd.read_csv(IMAGES_METADATA_FILEPATH, index_col=None)
 
 
 def write_images_metadata(images_metadata: pd.DataFrame):
-    return images_metadata.to_csv(METADATA_FILEPATH, index=False, header=True)
+    return images_metadata.to_csv(IMAGES_METADATA_FILEPATH, index=False, header=True)
 
 
 def read_image(image_filepath, with_alpha=False):
@@ -170,4 +173,9 @@ def read_labeled_and_reviewed_features_for_all_images(check_data=False) -> pd.Da
         & (df[LABELING_MODE_COLUMN].isin([LABELING_MANUAL, LABELING_APPROVED]))
     ]
     print("read {} approved features (manual and semi-auto)".format(df.shape[0]))
+    return df
+
+
+def read_labels_metadata() -> pd.DataFrame:
+    df = pd.read_csv(LABELS_METADATA_FILEPATH, index_col=None)
     return df

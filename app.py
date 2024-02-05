@@ -1,13 +1,15 @@
-from dash import Dash, html, dcc, page_registry, page_container
-import dash_bootstrap_components as dbc
-from werkzeug.middleware.profiler import ProfilerMiddleware
 import os
 
-PROF_DIR='/tmp/pprof'
+import dash_bootstrap_components as dbc
+from dash import Dash, dcc, html, page_container, page_registry
+from werkzeug.middleware.profiler import ProfilerMiddleware
+
+PROF_DIR = "/tmp/pprof"
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], use_pages=True)
+server = app.server
 
-from pages import measure_image, execute_sam, label_cells
+from pages import execute_sam, label_cells, measure_image
 
 app.layout = html.Div(
     [
@@ -38,7 +40,7 @@ if __name__ == "__main__":
             sort_by=["cumtime"],
             restrictions=[50],
             stream=None,
-            profile_dir=PROF_DIR
+            profile_dir=PROF_DIR,
         )
 
     app.run(debug=True)

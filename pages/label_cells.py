@@ -42,6 +42,7 @@ from filepath_util import (
     get_masks_features_filepath,
     read_image,
     read_images_metadata,
+    read_labels_metadata,
     read_masks_features,
     read_masks_for_image,
     write_images_metadata,
@@ -597,9 +598,18 @@ def handle_save_labels_button_click(n_clicks, labeled_masks_df, image_filepath):
     pillow_image = Image.fromarray(image.astype(np.uint8))
     pillow_image.save(image_result_filepath, compression="tiff_lzw")
 
-    label_counts = labeled_masks_df[Y_COLUMN].value_counts().reset_index()
-    label_counts.columns = ["Label", "Count"]
-    label_counts.to_csv(
+    labels_metadata = read_labels_metadata()
+    # Group by labels and sort results by the order that is listed in labels_metadata.csv
+    common_labels = set(labeled_masks_df[Y_COLUMN]).intersection(
+        labels_metadata["label"]
+    )
+    filtered_df_data = labeled_masks_df[labeled_masks_df[Y_COLUMN].isin(common_labels)]
+    filtered_df_order = labels_metadata[labels_metadata["label"].isin(common_labels)]
+    label_counts = filtered_df_data[Y_COLUMN].value_counts()
+    ordered_label_counts = label_counts.loc[filtered_df_order["label"]].reset_index()
+    ordered_label_counts.columns = ["Label", "Count"]
+
+    ordered_label_counts.to_csv(
         result_filepath_base + "_label_counts.tsv", sep="\t", index=False
     )
 
