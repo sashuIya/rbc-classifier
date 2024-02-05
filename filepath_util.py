@@ -27,7 +27,7 @@ def get_rel_filepaths_from_subfolders(folder_path, extension, exclude=None):
     filepaths = glob.glob(search_pattern, recursive=True)
     if exclude is not None:
         filepaths = [filepath for filepath in filepaths if exclude not in filepath]
-    return filepaths
+    return sorted(filepaths)
 
 
 def get_masks_filepath(image_filepath, suffix):
