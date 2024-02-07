@@ -163,17 +163,35 @@ layout = dbc.Container(
                 ],
             )
         ),
-        dbc.Row(
+        dbc.Tabs(
             [
-                dbc.Col(dcc.Graph(id=id("canvas"))),
-                dbc.Col(id=id("selected-masks")),
+                dbc.Tab(
+                    label="Preview",
+                    tab_id="preview",
+                    children=[
+                        dbc.Row(
+                            [
+                                dbc.Col(dcc.Graph(id=id("canvas"))),
+                                dbc.Col(id=id("selected-masks")),
+                            ],
+                            justify="between",
+                        ),
+                    ],
+                ),
+                dbc.Tab(
+                    label="Manual labeling",
+                    tab_id="manual-labeling",
+                    children=[
+                        dbc.Row(
+                            [
+                                dbc.Col(id=id("all-masks"), width="auto"),
+                            ],
+                        ),
+                    ],
+                ),
             ],
-            justify="between",
-        ),
-        dbc.Row(
-            [
-                dbc.Col(id=id("all-masks"), width="auto"),
-            ],
+            id=id("tabs"),
+            active_tab="preview",
         ),
         dcc.Store(id=id("labeled-masks")),
         dcc.Store(id=id("modified-labels")),
