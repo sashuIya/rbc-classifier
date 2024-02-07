@@ -9,7 +9,7 @@ PROF_DIR = "/tmp/pprof"
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], use_pages=True)
 server = app.server
 
-from pages import execute_sam, label_cells, measure_image
+from pages import execute_sam, label_cells, measure_image  # noqa: F401, E402
 
 app.layout = html.Div(
     [

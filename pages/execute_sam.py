@@ -70,27 +70,29 @@ layout = dbc.Container(
                         id=id("image-filepath"),
                         predicate_fn=is_completed,
                     ),
-                    html.Div(style={"padding": "20px"}),
+                    html.Div(style={"padding": "10px"}),
                     html.Div("Segment-Anything checkpoint filepath"),
                     dcc.Dropdown(
                         SAM_CHECKPOINT_FILEPATHS,
                         SAM_CHECKPOINT_FILEPATHS[0],
                         id=id("sam-checkpoint-filepath"),
                     ),
-                    html.Div(style={"padding": "20px"}),
+                    html.Div(style={"padding": "10px"}),
                     html.Div("Image height without scaling:", id=id("image-height")),
-                    html.Div(style={"padding": "20px"}),
+                    html.Div(style={"padding": "10px"}),
+                    dbc.Checklist(
+                        [USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION],
+                        value=[USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION],
+                        id=id("grid-size-as-suffix"),
+                        switch=True,
+                    ),
+                    html.Div(style={"padding": "10px"}),
                     dbc.Button(
                         "Run SAM",
                         color="primary",
                         className="me-1",
                         id=id("run-sam-button"),
                         n_clicks=0,
-                    ),
-                    dcc.Checklist(
-                        [USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION],
-                        value=[USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION],
-                        id=id("grid-size-as-suffix"),
                     ),
                     dbc.Button(
                         "Compute and save features",
@@ -99,6 +101,7 @@ layout = dbc.Container(
                         id=id("compute-features-button"),
                         n_clicks=0,
                     ),
+                    html.Div(style={"padding": "10px"}),
                     dbc.Alert(
                         "Cannot execute for already completed image!",
                         id=id("execute-alert"),
@@ -117,16 +120,25 @@ layout = dbc.Container(
                         type="default",
                         children=html.Div(id=id("loading-sam-output")),
                     ),
-                    html.Div(style={"padding": "20px"}),
+                    html.Div(style={"padding": "10px"}),
                     dcc.Slider(5, 300, 5, id=id("grid-size"), value=5),
-                    html.Div(style={"padding": "20px"}),
-                    html.Div("crop-n-layers"),
-                    dcc.RadioItems([0, 1, 2, 3], 0, id=id("crop-n-layers")),
-                    dcc.Graph(id=id("canvas")),
-                    html.H4("Masks preview"),
-                    dcc.Graph(id=id("masks-preview")),
-                ],
+                    html.Div(style={"padding": "10px"}),
+                    dbc.Label("crop-n-layers"),
+                    dbc.RadioItems([0, 1, 2, 3], 0, id=id("crop-n-layers")),
+                ]
             )
+        ),
+        dbc.Row(
+            [
+                dbc.Col(
+                    dcc.Graph(id=id("canvas")),
+                    width=6,
+                ),
+                dbc.Col(
+                    dcc.Graph(id=id("masks-preview")),
+                    width=6,
+                ),
+            ]
         ),
     ],
     fluid=True,
@@ -259,7 +271,10 @@ def handle_run_sam_button_click(
         raise PreventUpdate
 
     metadata = read_images_metadata()
-    if is_completed(metadata, image_filepath):
+    if (
+        is_completed(metadata, image_filepath)
+        and USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION not in points_per_side_as_suffix
+    ):
         return {}, {}, True
 
     image, masks = run_sam_for_image(

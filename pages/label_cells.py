@@ -20,7 +20,6 @@ from dash import (
 )
 from dash.exceptions import PreventUpdate
 from PIL import Image
-from skimage import measure
 
 from consts import (
     # Labels (options of Y_COLUMN)
@@ -98,8 +97,6 @@ LABELS = {
 id = id_factory("label-cells")
 register_page(__name__, order=2)
 
-# app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
-
 CLASSIFIER_MODEL_FILEPATHS = get_classifier_model_filepaths()
 if not CLASSIFIER_MODEL_FILEPATHS:
     CLASSIFIER_MODEL_FILEPATHS = ["none"]
@@ -110,59 +107,90 @@ image_trace_cache = {}
 
 layout = dbc.Container(
     [
-        dbc.Row(
-            dbc.Col(
-                [
-                    html.H1(children="Labeling tool", style={"textAlign": "center"}),
-                    image_selection_dropdown(
-                        id=id("image-filepath"), predicate_fn=is_completed
-                    ),
-                    dcc.Dropdown(
-                        CLASSIFIER_MODEL_FILEPATHS,
-                        CLASSIFIER_MODEL_FILEPATHS[0],
-                        id=id("classifier-model"),
-                    ),
-                    dbc.Button(
-                        "Train classifier on labeled data",
-                        id=id("train-classifier-button"),
-                        className="me-1",
-                        n_clicks=0,
-                    ),
-                    dbc.Button(
-                        "Run classifier",
-                        id=id("run-classifier-button"),
-                        className="me-1",
-                        n_clicks=0,
-                    ),
-                    dbc.Button(
-                        "Save masks",
-                        color="warning",
-                        id=id("save-labels-button"),
-                        className="me-1",
-                        n_clicks=0,
-                    ),
-                    dcc.Checklist([CHECKBOX_COMPLETED], id=id("completed-checkbox")),
-                    dcc.RadioItems(
-                        DISPLAY_OPTIONS, DISPLAY_LABELED_DATA, id=id("display-options")
-                    ),
-                    html.Div(id=id("clicked-pixel-coords")),
-                    dash_table.DataTable(
-                        id=id("labels-stats"),
-                        columns=[
-                            {"name": "Label", "id": "Label"},
-                            {"name": "Count", "id": "Count"},
-                        ],
-                        data=[{"Label": "X", "Count": "Y"}],
-                        # Set the width of the table
-                        style_table={"width": "10%"},  # Adjust the percentage as needed
-                    ),
-                    html.Div(style={"padding": "20px"}),
-                    dcc.RadioItems(
-                        list(LABELS.keys()), "red blood cell", id=id("active-label")
-                    ),
-                ],
-            )
+        html.H1(children="Labeling tool", style={"textAlign": "center"}),
+        image_selection_dropdown(id=id("image-filepath"), predicate_fn=is_completed),
+        dcc.Dropdown(
+            CLASSIFIER_MODEL_FILEPATHS,
+            CLASSIFIER_MODEL_FILEPATHS[0],
+            id=id("classifier-model"),
         ),
+        dbc.Button(
+            "Train classifier on labeled data",
+            id=id("train-classifier-button"),
+            className="me-1",
+            n_clicks=0,
+        ),
+        dbc.Button(
+            "Run classifier",
+            id=id("run-classifier-button"),
+            className="me-1",
+            n_clicks=0,
+        ),
+        dbc.Button(
+            "Save masks",
+            color="warning",
+            id=id("save-labels-button"),
+            className="me-1",
+            n_clicks=0,
+        ),
+        html.Div(style={"padding": "10px"}),
+        dbc.Row(
+            [
+                dbc.Col(
+                    [
+                        dbc.Checklist(
+                            [CHECKBOX_COMPLETED],
+                            id=id("completed-checkbox"),
+                            switch=True,
+                        ),
+                        html.Div(style={"padding": "10px"}),
+                        dbc.Label("Clicked pixel:"),
+                        html.Div("X, Y", id=id("clicked-pixel-coords")),
+                    ],
+                    width=1,
+                ),
+                dbc.Col(
+                    [
+                        dbc.Label("Selected label:"),
+                        dbc.RadioItems(
+                            list(LABELS.keys()), "red blood cell", id=id("active-label")
+                        ),
+                    ]
+                ),
+                dbc.Col(
+                    [
+                        dbc.Label("Stats:"),
+                        dash_table.DataTable(
+                            id=id("labels-stats"),
+                            columns=[
+                                {"name": "Label", "id": "Label"},
+                                {"name": "Count", "id": "Count"},
+                            ],
+                            style_cell_conditional=[
+                                {"if": {"column_id": "Label"}, "textAlign": "left"}
+                            ],
+                            data=[{"Label": "X", "Count": "Y"}],
+                            # Set the width of the table
+                            style_table={
+                                "width": "10%"
+                            },  # Adjust the percentage as needed
+                            style_as_list_view=True,
+                        ),
+                    ],
+                ),
+                dbc.Col(
+                    [
+                        dbc.Label("Display options:"),
+                        dbc.RadioItems(
+                            DISPLAY_OPTIONS,
+                            DISPLAY_LABELED_DATA,
+                            id=id("display-options"),
+                        ),
+                    ]
+                ),
+            ]
+        ),
+        html.Div(style={"padding": "10px"}),
         dbc.Tabs(
             [
                 dbc.Tab(
@@ -566,7 +594,7 @@ def handle_canvas_click(
         )
 
     return (
-        html.H3("x: {}, y: {}".format(x, y)),
+        html.Div("x: {}, y: {}".format(x, y)),
         generate_labeled_masks_previews(
             SELECTED_MASKS_RADIO_BUTTONS_PREFIX, clicked_crop_infos
         ),
