@@ -12,7 +12,7 @@
 ## ✨ Key Features
 
 *  A measurement tool cuts the metadata from the bottom of the image and stores the image scaling;
-*  Run [SegmentAnything](https://github.com/facebookresearch/segment-anything) with the customizable options;
+*  Identify objects by running [SegmentAnything](https://github.com/facebookresearch/segment-anything) with the customizable grid layout;
 *  Use HITL technique to train and improve the classifier:
     - label several objects
     - train a classifier
