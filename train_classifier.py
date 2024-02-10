@@ -4,22 +4,16 @@ matplotlib.use("Agg")  # 'Agg' backend is suitable for saving figures to files
 import faiss
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from pytorch_metric_learning import distances, losses, miners, reducers, testers
 from pytorch_metric_learning.utils.accuracy_calculator import AccuracyCalculator
 from scipy.stats import mode
 from sklearn import preprocessing
 from sklearn.manifold import TSNE
-from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.svm import SVC
-from torch.utils.data import DataLoader, Dataset, TensorDataset
-from tqdm import tqdm
+from torch.utils.data import DataLoader, TensorDataset
 
 from consts import (
     LABEL_UNLABELED,
@@ -29,7 +23,6 @@ from consts import (
 from filepath_util import (
     read_embedder_and_faiss,
     read_labeled_and_reviewed_features_for_all_images,
-    read_masks_features,
     write_embedder_and_faiss,
 )
 
@@ -130,6 +123,31 @@ def get_labels_from_data_loader(data_loader):
     return np.concatenate(labels_list)
 
 
+def plot_clusters(
+    data_loader: DataLoader,
+    output_filename: str,
+    embedder: Embedder,
+    label_encoder: preprocessing.LabelEncoder,
+):
+    """Computes the embeddings for the given data_loader, plots and saves 2d projections."""
+    embeddings, embedding_labels = embed(embedder, data_loader)
+    tsne = TSNE(n_components=2, random_state=42)
+    embeddings_2d = tsne.fit_transform(embeddings)
+    # Create a scatter plot with different colors for each label
+    plt.figure(figsize=(10, 8))
+    for label in np.unique(embedding_labels):
+        plt.scatter(
+            embeddings_2d[embedding_labels == label, 0],
+            embeddings_2d[embedding_labels == label, 1],
+            label=f"Label {label_encoder.inverse_transform([label])}",
+        )
+    plt.title("t-SNE Visualization of Embeddings")
+    plt.legend()
+
+    # Save the plot as an image
+    plt.savefig(output_filename)
+
+
 def train_pipeline():
     if DEVICE == "cuda":
         torch.cuda.empty_cache()
@@ -195,45 +213,21 @@ def train_pipeline():
 
     test_embedder(train_dataset, val_dataset, embedder, accuracy_calculator)
 
-    train_embeddings, train_embedding_labels = embed(embedder, train_loader)
-
-    tsne = TSNE(n_components=2, random_state=42)
-    embeddings_2d = tsne.fit_transform(train_embeddings)
-    # Create a scatter plot with different colors for each label
-    plt.figure(figsize=(10, 8))
-    for label in np.unique(train_embedding_labels):
-        plt.scatter(
-            embeddings_2d[train_embedding_labels == label, 0],
-            embeddings_2d[train_embedding_labels == label, 1],
-            label=f"Label {label_encoder.inverse_transform([label])}",
-        )
-    plt.title("t-SNE Visualization of Embeddings")
-    plt.legend()
-
-    # Save the plot as an image
-    plt.savefig("train_embedding_visualization.png")
-
-    ## Validate
-    val_embeddings, val_embedding_labels = embed(embedder, val_loader)
-
-    tsne = TSNE(n_components=2, random_state=42)
-    embeddings_2d = tsne.fit_transform(val_embeddings)
-    # Create a scatter plot with different colors for each label
-    plt.figure(figsize=(10, 8))
-    for label in np.unique(val_embedding_labels):
-        plt.scatter(
-            embeddings_2d[val_embedding_labels == label, 0],
-            embeddings_2d[val_embedding_labels == label, 1],
-            label=f"Label {label_encoder.inverse_transform([label])}",
-        )
-    plt.title("t-SNE Visualization of Embeddings")
-    plt.legend()
-
-    # Save the plot as an image
-    plt.savefig("val_embedding_visualization.png")
+    # Plot and save train and val embeddings (as 2d projections).
+    plot_clusters(
+        train_loader,
+        "train_embedding_visualization.png",
+        embedder,
+        label_encoder,
+    )
+    plot_clusters(
+        val_loader,
+        "val_embedding_visualization.png",
+        embedder,
+        label_encoder,
+    )
 
     all_embeddings, all_embedding_labels = embed(embedder, all_loader)
-
     all_embeddings = all_embeddings / np.linalg.norm(
         all_embeddings, axis=1, keepdims=True
     )
