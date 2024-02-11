@@ -71,23 +71,28 @@ def train_embedder(
         )
 
 
-### convenient function from pytorch-metric-learning ###
 def get_all_embeddings(dataset, model):
+    """Convenient function from pytorch-metric-learning."""
     tester = testers.BaseTester(dataloader_num_workers=1)
     return tester.get_all_embeddings(dataset, model)
 
 
-### compute accuracy using AccuracyCalculator from pytorch-metric-learning ###
-def test_embedder(train_set, test_set, model, accuracy_calculator):
+def test_embedder(train_set, test_set, model, accuracy_calculator) -> float:
+    """Computes and returns accuracy using AccuracyCalculator from pytorch-metric-learning."""
     train_embeddings, train_labels = get_all_embeddings(train_set, model)
     test_embeddings, test_labels = get_all_embeddings(test_set, model)
     train_labels = train_labels.squeeze(1)
     test_labels = test_labels.squeeze(1)
+
     print("Computing accuracy")
     accuracies = accuracy_calculator.get_accuracy(
         test_embeddings, test_labels, train_embeddings, train_labels, False
     )
-    print("Test set accuracy (Precision@1) = {}".format(accuracies["precision_at_1"]))
+
+    accuracy = accuracies["precision_at_1"]
+    print("Test set accuracy (Precision@1) = {}".format(accuracy))
+
+    return accuracy
 
 
 def embed(embedder, data_loader):
@@ -211,7 +216,9 @@ def train_pipeline():
             embedder, loss_func, mining_func, DEVICE, train_loader, optimizer, epoch
         )
 
-    test_embedder(train_dataset, val_dataset, embedder, accuracy_calculator)
+    validation_accuracy = test_embedder(
+        train_dataset, val_dataset, embedder, accuracy_calculator
+    )
 
     # Plot and save train and val embeddings (as 2d projections).
     plot_clusters(
@@ -234,7 +241,15 @@ def train_pipeline():
     index = faiss.IndexFlatIP(all_embeddings.shape[1])
     index.add(all_embeddings)
 
-    write_embedder_and_faiss(embedder, index, all_embedding_labels, label_encoder)
+    write_embedder_and_faiss(
+        embedder,
+        index,
+        all_embedding_labels,
+        label_encoder,
+        labeled_data_df=labeled_data_df,
+        validation_accuracy=round(validation_accuracy, 2),
+        epochs=num_epochs,
+    )
 
 
 def classify(df, classifier_model_filepath):

@@ -1,10 +1,13 @@
-import datetime
 import glob
+import json
 import os
 import pickle
+from dataclasses import dataclass
+from datetime import datetime
 
 import cv2
 import faiss
+import numpy as np
 import pandas as pd
 import torch
 
@@ -18,6 +21,7 @@ from consts import (
 
 IMAGES_METADATA_FILEPATH = os.path.normpath("dataset/images_metadata.csv")
 LABELS_METADATA_FILEPATH = os.path.normpath("dataset/labels_metadata.csv")
+EMBEDDERS_METADATA_FILEPATH = os.path.normpath("model/embedders_metadata.csv")
 
 CLASSIFIER_CHECKPOINT_DIR = "model/cells_classifier/"
 
@@ -42,7 +46,7 @@ def get_classifier_model_filepaths():
     filepaths = get_rel_filepaths_from_subfolders(
         folder_path=CLASSIFIER_CHECKPOINT_DIR, extension="pth"
     )
-    filepaths.sort(reverse=True)
+    filepaths.sort(key=os.path.getctime, reverse=True)
 
     return filepaths
 
@@ -104,9 +108,83 @@ def read_masks_for_image(image_filepath, suffix=""):
     return sorted_masks
 
 
-def write_embedder_and_faiss(embedder_model, faiss_index, labels, label_encoder):
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    filename = f"classifier_model_{timestamp}.pth"
+class EmbedderMetadata:
+    _MODEL_NAME = "Model name"
+    _TIME_CREATED = "Time created"
+    _DATA_USED = "Data used"
+    _VALIDATION_ACCURACY = "Validation accuracy"
+    _EPOCHS = "Number of epochs"
+
+    def load_embedder_metadata(self, filepath: str) -> pd.Series:
+        if not os.path.exists(EMBEDDERS_METADATA_FILEPATH):
+            return None
+
+        filename = os.path.basename(filepath)
+        metadata_df = pd.read_csv(EMBEDDERS_METADATA_FILEPATH, index_col=None)
+        metadata = metadata_df.loc[metadata_df[self._MODEL_NAME] == filename]
+
+        if metadata.empty:
+            return None
+
+        return metadata.iloc[0]
+
+    def save_embedder_metadata(
+        self,
+        filename: str,
+        timestamp: datetime,
+        labeled_data_df: pd.DataFrame,
+        validation_accuracy: float,
+        epochs: int,
+    ):
+        metadata_df = pd.DataFrame(
+            columns=[
+                self._MODEL_NAME,
+                self._TIME_CREATED,
+                self._VALIDATION_ACCURACY,
+                self._EPOCHS,
+                self._DATA_USED,
+            ]
+        )
+        if os.path.exists(EMBEDDERS_METADATA_FILEPATH):
+            metadata_df = pd.read_csv(EMBEDDERS_METADATA_FILEPATH, index_col=None)
+
+        # Use numpy.unique() to get unique elements and their counts
+        unique_elements, counts = np.unique(
+            labeled_data_df[Y_COLUMN], return_counts=True
+        )
+        data_used = "\t".join(
+            [
+                "{}: {}".format(element, count)
+                for element, count in zip(unique_elements, counts)
+            ]
+        )
+
+        metadata = {
+            self._MODEL_NAME: filename,
+            self._TIME_CREATED: timestamp.strftime("%d %b %Y (%H:%M:%S)"),
+            self._VALIDATION_ACCURACY: validation_accuracy,
+            self._EPOCHS: epochs,
+            self._DATA_USED: data_used,
+        }
+        metadata_df = pd.concat(
+            [metadata_df, pd.DataFrame([metadata])], ignore_index=True
+        )
+
+        metadata_df.to_csv(EMBEDDERS_METADATA_FILEPATH, index=False, header=True)
+
+
+def write_embedder_and_faiss(
+    embedder_model,
+    faiss_index,
+    labels,
+    label_encoder,
+    labeled_data_df,
+    validation_accuracy,
+    epochs,
+):
+    timestamp = datetime.now()
+    filename_timestamp = timestamp.strftime("%Y-%m-%d_%H-%M-%S")
+    filename = f"classifier_model_{filename_timestamp}.pth"
     filepath = os.path.join(CLASSIFIER_CHECKPOINT_DIR, filename)
     model_state = {
         "embedder": embedder_model,
@@ -115,6 +193,10 @@ def write_embedder_and_faiss(embedder_model, faiss_index, labels, label_encoder)
         "label_encoder": label_encoder,
     }
     torch.save(model_state, filepath)
+
+    EmbedderMetadata().save_embedder_metadata(
+        filename, timestamp, labeled_data_df, validation_accuracy, epochs
+    )
 
 
 def read_embedder_and_faiss(filepath):

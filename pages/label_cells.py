@@ -37,6 +37,7 @@ from consts import (
 from dash_util import id_factory
 from draw_util import MasksColorOptions, get_masked_crop, get_masks_img
 from filepath_util import (
+    EmbedderMetadata,
     get_classifier_model_filepaths,
     get_masks_features_filepath,
     read_image,
@@ -84,6 +85,29 @@ def masks_display_option(display_option: str) -> MasksColorOptions:
         DISPLAY_UNLABELED_DATA: MasksColorOptions.NONE,
     }
     return option_to_option[display_option]
+
+
+def construct_embedder_metadata_container(embedder_filepath):
+    metadata_series = EmbedderMetadata().load_embedder_metadata(embedder_filepath)
+    if metadata_series is None:
+        return ""
+
+    def replace_tabs(x):
+        if not isinstance(x, str):
+            return x
+        if "\t" not in x:
+            return x
+
+        return "\n- " + x.replace("\t", "\n- ")
+
+    metadata_dict = metadata_series.to_dict()
+    metadata_dict = {key: replace_tabs(value) for key, value in metadata_dict.items()}
+
+    formatted_dict = "\n".join(
+        [f"**{key}:** {metadata_dict[key]}\n" for key in metadata_series.index]
+    )
+
+    return formatted_dict
 
 
 LABELS = {
@@ -177,6 +201,16 @@ layout = dbc.Container(
                             style_as_list_view=True,
                         ),
                     ],
+                ),
+                dbc.Col(
+                    [
+                        dcc.Markdown(
+                            id=id("embedder-metadata-container"),
+                            children=construct_embedder_metadata_container(
+                                CLASSIFIER_MODEL_FILEPATHS[0]
+                            ),
+                        ),
+                    ]
                 ),
                 dbc.Col(
                     [
@@ -744,6 +778,15 @@ def handle_image_filepath_selection(image_filepath):
         [CHECKBOX_COMPLETED] if completed else [],
         all_mask_previews,
     )
+
+
+@callback(
+    Output(id("embedder-metadata-container"), "children"),
+    Input(id("classifier-model"), "value"),
+    suppress_callback_exceptions=True,
+)
+def handle_classifier_model_selection(embedder_filepath):
+    return construct_embedder_metadata_container(embedder_filepath)
 
 
 @callback(
