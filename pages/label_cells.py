@@ -233,7 +233,11 @@ layout = dbc.Container(
                     children=[
                         dbc.Row(
                             [
-                                dbc.Col(dcc.Graph(id=id("canvas"))),
+                                dbc.Col(
+                                    dcc.Graph(
+                                        id=id("canvas"), config={"scrollZoom": True}
+                                    )
+                                ),
                                 dbc.Col(id=id("selected-masks")),
                             ],
                             justify="between",
