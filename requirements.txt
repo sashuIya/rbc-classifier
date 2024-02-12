@@ -1,5 +1,6 @@
 dash
 dash-daq
+dash-extensions==1.0.12
 faiss-gpu
 git+https://github.com/facebookresearch/segment-anything.git
 ipywidgets

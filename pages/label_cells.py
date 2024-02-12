@@ -19,6 +19,7 @@ from dash import (
     register_page,
 )
 from dash.exceptions import PreventUpdate
+from dash_extensions import EventListener
 from PIL import Image
 
 from consts import (
@@ -111,12 +112,13 @@ def construct_embedder_metadata_container(embedder_filepath):
 
 
 LABELS = {
-    LABEL_UNLABELED: {"color": np.array([204, 0, 255])},
-    LABEL_WRONG: {"color": np.array([203, 255, 0])},
     "red blood cell": {"color": np.array([255, 0, 0])},
     "spheroid cell": {"color": np.array([0, 255, 102])},
     "echinocyte": {"color": np.array([0, 101, 255])},
+    LABEL_WRONG: {"color": np.array([203, 255, 0])},
+    LABEL_UNLABELED: {"color": np.array([204, 0, 255])},
 }
+DEFAULT_LABEL = "red blood cell" if "red blood cell" in LABELS else LABEL_WRONG
 
 id = id_factory("label-cells")
 register_page(__name__, order=2)
@@ -125,12 +127,15 @@ CLASSIFIER_MODEL_FILEPATHS = get_classifier_model_filepaths()
 if not CLASSIFIER_MODEL_FILEPATHS:
     CLASSIFIER_MODEL_FILEPATHS = ["none"]
 
-# Create dictionaries to store processed images and image traces
-image_cache = {}
-image_trace_cache = {}
+event = {"event": "keydown", "props": ["key"]}
 
 layout = dbc.Container(
     [
+        EventListener(
+            events=[event],
+            logging=True,
+            id=id("el"),
+        ),
         html.H1(children="Labeling tool", style={"textAlign": "center"}),
         image_selection_dropdown(id=id("image-filepath"), predicate_fn=is_completed),
         dcc.Dropdown(
@@ -177,7 +182,9 @@ layout = dbc.Container(
                     [
                         dbc.Label("Selected label:"),
                         dbc.RadioItems(
-                            list(LABELS.keys()), "red blood cell", id=id("active-label")
+                            list(LABELS.keys()),
+                            DEFAULT_LABEL,
+                            id=id("active-label"),
                         ),
                     ]
                 ),
@@ -276,16 +283,6 @@ def create_color_by_mask_id(labels_df):
         color_by_mask_id[mask_id] = LABELS[label]["color"]
 
     return color_by_mask_id
-
-
-# Creates Plotly image trace function with caching (Optimized).
-def create_image_trace(image, image_filepath):
-    if image_filepath in image_trace_cache:
-        return image_trace_cache[image_filepath]
-
-    img_trace = px.imshow(image).data[0]
-    image_trace_cache[image_filepath] = img_trace
-    return img_trace
 
 
 def image_to_base64(image_array):
@@ -502,6 +499,34 @@ def image_with_masks_figure(
     image_fig.add_trace(trace)
 
     return image_fig
+
+
+@callback(
+    Output(id("active-label"), "value"),
+    Input(id("el"), "n_events"),
+    State(id("el"), "event"),
+    State(id("active-label"), "options"),
+)
+def handle_key_press(n_events, e, options):
+    if n_events == 0 or e is None:
+        raise PreventUpdate
+
+    def is_single_digit(s):
+        if s is None:
+            return False
+        return s.isdigit() and len(s) == 1
+
+    if not is_single_digit(e["key"]):
+        raise PreventUpdate
+
+    label_index = int(e["key"]) - 1
+    if label_index < 0:
+        label_index = 10
+
+    if label_index >= len(options):
+        raise PreventUpdate
+
+    return options[label_index]
 
 
 @callback(
