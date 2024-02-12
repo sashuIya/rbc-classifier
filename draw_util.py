@@ -134,3 +134,5 @@ def draw_height_and_scale(fig, image_shape, height, scale_x0, scale_x1, micromet
             font=dict(color="red", size=24),
         )
     )
+
+    fig.update(layout_showlegend=False)

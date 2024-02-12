@@ -117,6 +117,8 @@ def handle_measurements_update(image_filepath, height, micrometers, scale_x0, sc
         image_fig, image.shape, height, scale_x0, scale_x1, micrometers
     )
 
+    image_fig.update(layout_showlegend=False)
+
     return image_fig
 
 
