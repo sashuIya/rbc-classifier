@@ -31,4 +31,19 @@
     <img width="49%" src="docs/img/sample_result.png" alt="result"/>
 </p>
 
-</details>
+## Features
+
+### Output stats
+
+| **Label**      | **Count** |
+| -------------- | --------- |
+| red blood cell | 133       |
+| echinocyte     | 7         |
+| wrong          | 23        |
+
+### Labels
+
+* Customize a set of labels and train classifiers for any project;
+* Fix the missclassification manually (either by clicking on the masks preview or by reviewing masks one by one):
+
+<img src="docs/img/sample_fix_labels.png" alt="fixing labels" width="600"/>
