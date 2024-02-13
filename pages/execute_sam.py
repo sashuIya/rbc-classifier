@@ -167,21 +167,21 @@ def handle_image_filepath_selection(image_filepath, grid_size):
     img_trace = px.imshow(image).data[0]
     image_fig.add_trace(img_trace)
 
-    for i in range(grid_size + 1):
-        y = [i * (image.shape[0] / grid_size)] * 2
-        x = [0, image.shape[1]]
-        image_fig.add_scatter(x=x, y=y, line=dict(color="#ffe476"))
-
-    for i in range(grid_size + 1):
-        x = [i * (image.shape[1] / grid_size)] * 2
-        y = [0, image.shape[0]]
-        image_fig.add_scatter(x=x, y=y, line=dict(color="#ffe476"))
-
     metadata = read_images_metadata()
     height, scale_x0, scale_x1, micrometers = metadata.loc[
         metadata["filepath"] == image_filepath,
         ["height", "scale_x0", "scale_x1", "micrometers"],
     ].values[0]
+
+    for i in range(grid_size + 1):
+        y = [i * (height / grid_size)] * 2
+        x = [0, image.shape[1]]
+        image_fig.add_scatter(x=x, y=y, line=dict(color="#ffe476"))
+
+    for i in range(grid_size + 1):
+        x = [i * (image.shape[1] / grid_size)] * 2
+        y = [0, height]
+        image_fig.add_scatter(x=x, y=y, line=dict(color="#ffe476"))
 
     draw_height_and_scale(
         image_fig, image.shape, height, scale_x0, scale_x1, micrometers
