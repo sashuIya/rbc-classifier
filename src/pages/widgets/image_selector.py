@@ -1,15 +1,13 @@
-import os
-
 from dash import dcc, html
 
+from src.common.consts import RAW_IMAGES_DIR
 from src.common.filepath_util import (
     get_rel_filepaths_from_subfolders,
     read_images_metadata,
 )
 
-_IMAGES_PATH = os.path.normpath("./dataset/")
 TIF_FILEPATHS = get_rel_filepaths_from_subfolders(
-    folder_path=_IMAGES_PATH, extension="tif", exclude="result"
+    folder_path=RAW_IMAGES_DIR, extension="tif", exclude="result"
 )
 
 

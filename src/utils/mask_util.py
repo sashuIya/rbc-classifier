@@ -16,7 +16,7 @@ from src.common.consts import (
     LABELING_MODE_COLUMN,
     MASK_ID_COLUMN,
 )
-from src.common.filepath_util import read_images_metadata
+from src.common.filepath_util import get_masks_filepath, read_images_metadata
 
 DEVICE = "cuda"
 RESNET_BATCH_SIZE = 64
@@ -41,14 +41,6 @@ def sam_model_version(sam_checkpoint_filepath):
         return "vit_l"
 
     return None
-
-
-def save_masks(masks, image_filepath, suffix=""):
-    results_filepath = os.path.splitext(image_filepath)[0] + "{}.pkl".format(suffix)
-    results_filepath = os.path.normpath(results_filepath)
-    print("saving to {}".format(results_filepath))
-    with open(results_filepath, "wb") as f:
-        pickle.dump(masks, f)
 
 
 def run_sam(image, sam_checkpoint_filepath, crop_n_layers, points_per_side):

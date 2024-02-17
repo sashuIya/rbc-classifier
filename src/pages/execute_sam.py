@@ -15,6 +15,7 @@ from src.common.filepath_util import (
     read_image,
     read_images_metadata,
     read_masks_for_image,
+    write_masks,
     write_masks_features,
 )
 from src.pages.widgets.image_selector import (
@@ -29,7 +30,6 @@ from src.utils.mask_util import (
     compute_resnet_features,
     construct_features_dataframe,
     run_sam,
-    save_masks,
 )
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
@@ -45,8 +45,6 @@ HEIGHT_VALUES = [HEIGHT_FULL, 1024, 2048]
 USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION = "Use mesh size for masks file suffix"
 
 id = id_factory("execute_sam")
-
-print(__name__)
 register_page(__name__, order=1)
 
 
@@ -244,7 +242,7 @@ def run_sam_for_image(
     suffix = ""
     if USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION in points_per_side_as_suffix:
         suffix = suffix_for_masks_file(points_per_side)
-    save_masks(masks, image_filepath, suffix=suffix)
+    write_masks(masks, image_filepath, suffix=suffix)
 
     return image, masks
 

@@ -4,6 +4,7 @@ import os
 import pickle
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 import cv2
 import faiss
@@ -12,18 +13,18 @@ import pandas as pd
 import torch
 
 from src.common.consts import (
+    CLASSIFIER_CHECKPOINT_DIR,
+    EMBEDDERS_METADATA_FILEPATH,
+    IMAGES_METADATA_FILEPATH,
+    INTERIM_DATA_DIR,
     LABEL_UNLABELED,
     LABELING_APPROVED,
     LABELING_MANUAL,
     LABELING_MODE_COLUMN,
+    LABELS_METADATA_FILEPATH,
+    RAW_IMAGES_DIR,
     Y_COLUMN,
 )
-
-IMAGES_METADATA_FILEPATH = os.path.normpath("dataset/images_metadata.csv")
-LABELS_METADATA_FILEPATH = os.path.normpath("dataset/labels_metadata.csv")
-EMBEDDERS_METADATA_FILEPATH = os.path.normpath("model/embedders_metadata.csv")
-
-CLASSIFIER_CHECKPOINT_DIR = "model/cells_classifier/"
 
 
 def get_rel_filepaths_from_subfolders(folder_path, extension, exclude=None):
@@ -34,12 +35,28 @@ def get_rel_filepaths_from_subfolders(folder_path, extension, exclude=None):
     return sorted(filepaths)
 
 
-def get_masks_filepath(image_filepath, suffix):
-    return os.path.splitext(image_filepath)[0] + suffix + ".pkl"
+def get_masks_filepath(image_filepath: str, suffix: str) -> Path:
+    image_filepath = Path(image_filepath)
+
+    masks_filepath = (
+        INTERIM_DATA_DIR
+        / image_filepath.parent.relative_to(RAW_IMAGES_DIR)
+        / image_filepath.stem
+        / f"masks/masks{suffix}.pkl"
+    )
+    return masks_filepath
 
 
-def get_masks_features_filepath(image_filepath, suffix=""):
-    return os.path.splitext(image_filepath)[0] + suffix + "_features.csv"
+def get_masks_features_filepath(image_filepath: str, suffix: str = "") -> Path:
+    image_filepath = Path(image_filepath)
+
+    mask_features_filepath = (
+        INTERIM_DATA_DIR
+        / image_filepath.parent.relative_to(RAW_IMAGES_DIR)
+        / image_filepath.stem
+        / f"mask_features/features{suffix}.csv"
+    )
+    return mask_features_filepath
 
 
 def get_classifier_model_filepaths():
@@ -53,7 +70,7 @@ def get_classifier_model_filepaths():
 
 def read_masks_features(image_filepath, suffix=""):
     masks_features_filepath = get_masks_features_filepath(image_filepath, suffix=suffix)
-    if not os.path.exists(masks_features_filepath):
+    if not masks_features_filepath.exists():
         return None
 
     return pd.read_csv(masks_features_filepath, index_col=None)
@@ -62,15 +79,19 @@ def read_masks_features(image_filepath, suffix=""):
 def write_masks_features(
     masks_features_df: pd.DataFrame, image_filepath: str, suffix=""
 ):
-    return masks_features_df.to_csv(
-        get_masks_features_filepath(image_filepath, suffix=suffix),
+    mask_features_filepath = get_masks_features_filepath(image_filepath, suffix=suffix)
+    if not mask_features_filepath.parent.exists():
+        mask_features_filepath.parent.mkdir(parents=True, exist_ok=True)
+
+    masks_features_df.to_csv(
+        mask_features_filepath,
         index=False,
         header=True,
     )
 
 
 def read_images_metadata():
-    if not os.path.exists(IMAGES_METADATA_FILEPATH):
+    if not os.path.exists(LABELS_METADATA_FILEPATH):
         return pd.DataFrame(columns=["filepath"])
 
     return pd.read_csv(IMAGES_METADATA_FILEPATH, index_col=None)
@@ -98,7 +119,10 @@ def read_masks(masks_filepath):
 
 def read_masks_for_image(image_filepath, suffix=""):
     masks_filepath = get_masks_filepath(image_filepath, suffix)
-    with open(masks_filepath, "rb") as f:
+    if not masks_filepath.exists():
+        return None
+
+    with masks_filepath.open("rb") as f:
         masks = pickle.load(f)
 
     sorted_masks = sorted(masks, key=(lambda x: x["area"]))
@@ -106,6 +130,19 @@ def read_masks_for_image(image_filepath, suffix=""):
         mask["id"] = i
 
     return sorted_masks
+
+
+def write_masks(masks, image_filepath, suffix=""):
+    masks_filepath = get_masks_filepath(image_filepath, suffix)
+
+    print(masks_filepath)
+
+    if not masks_filepath.parent.exists():
+        masks_filepath.parent.mkdir(parents=True, exist_ok=True)
+
+    print(f"saving to {masks_filepath}")
+    with masks_filepath.open("wb") as f:
+        pickle.dump(masks, f)
 
 
 class EmbedderMetadata:
