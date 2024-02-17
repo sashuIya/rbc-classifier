@@ -135,8 +135,6 @@ def read_masks_for_image(image_filepath, suffix=""):
 def write_masks(masks, image_filepath, suffix=""):
     masks_filepath = get_masks_filepath(image_filepath, suffix)
 
-    print(masks_filepath)
-
     if not masks_filepath.parent.exists():
         masks_filepath.parent.mkdir(parents=True, exist_ok=True)
 
