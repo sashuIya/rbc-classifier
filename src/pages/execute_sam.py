@@ -1,3 +1,4 @@
+import json
 import os
 import warnings
 from datetime import datetime
@@ -12,11 +13,14 @@ from dash.exceptions import PreventUpdate
 from skimage import measure
 from tqdm import tqdm
 
+from src.common.consts import DEFAULT_SAM_CONFIG, SAM_CHECKPOINTS_FOLDER
 from src.common.filepath_util import (
     ImageDataWriter,
     get_rel_filepaths_from_subfolders,
+    load_lastest_sam_config,
     read_image,
     read_images_metadata,
+    save_sam_config,
 )
 from src.pages.widgets.image_selector import (
     image_selection_dropdown,
@@ -34,7 +38,6 @@ from src.utils.mask_util import (
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
-SAM_CHECKPOINTS_FOLDER = os.path.normpath("./model/sam/")
 SAM_CHECKPOINT_FILEPATHS = get_rel_filepaths_from_subfolders(
     folder_path=SAM_CHECKPOINTS_FOLDER, extension="pth"
 )
@@ -81,6 +84,34 @@ layout = dbc.Container(
                     html.Div(style={"padding": "10px"}),
                     html.Div("Image height without scaling:", id=id("image-height")),
                     html.Div(style={"padding": "10px"}),
+                ]
+            )
+        ),
+        dbc.Row(
+            [
+                dbc.Col(
+                    dcc.Textarea(
+                        id=id("sam-config"),
+                        value=json.dumps(load_lastest_sam_config(), indent=4),
+                        style={"width": "100%", "height": "250px"},
+                    ),
+                    width=2,
+                ),
+                dbc.Col(
+                    dcc.Markdown(
+                        id="default-config",
+                        children=[
+                            f"**Default Configuration:**\n```json\n{json.dumps(DEFAULT_SAM_CONFIG, indent=4)}\n```"
+                        ],
+                    ),
+                    width=2,
+                ),
+            ],
+            justify="start",
+        ),
+        dbc.Row(
+            dbc.Col(
+                [
                     html.Div(style={"padding": "10px"}),
                     dbc.Button(
                         "Run SAM",
@@ -109,6 +140,7 @@ layout = dbc.Container(
                         children=html.Div(id=id("loading-sam-output")),
                     ),
                     html.Div(style={"padding": "10px"}),
+                    dcc.Slider(1, 10, 1, id=id("crops-per-side"), value=1),
                     dcc.Slider(5, 300, 5, id=id("grid-size"), value=5),
                     html.Div(style={"padding": "10px"}),
                     dbc.Label("crop-n-layers"),
@@ -133,8 +165,16 @@ layout = dbc.Container(
 )
 
 
-def suffix_for_masks_file(points_per_side):
-    return "__{}".format(points_per_side)
+def add_grid(fig: go.FigureWidget, width: int, height: int, grid_size: int, color: int):
+    for i in range(grid_size + 1):
+        y = [i * (height / grid_size)] * 2
+        x = [0, width]
+        fig.add_scatter(x=x, y=y, line=dict(color=color))
+
+    for i in range(grid_size + 1):
+        x = [i * (width / grid_size)] * 2
+        y = [0, height]
+        fig.add_scatter(x=x, y=y, line=dict(color=color))
 
 
 @callback(
@@ -142,9 +182,10 @@ def suffix_for_masks_file(points_per_side):
     Output(id("canvas"), "figure"),
     Output(id("execute-alert"), "is_open"),
     Input(id("image-filepath"), "value"),
+    Input(id("crops-per-side"), "value"),
     Input(id("grid-size"), "value"),
 )
-def handle_image_filepath_selection(image_filepath, grid_size):
+def handle_image_filepath_selection(image_filepath, crops_size, grid_size):
     if not image_filepath:
         return {}, {}, False
 
@@ -161,16 +202,8 @@ def handle_image_filepath_selection(image_filepath, grid_size):
         ["height", "scale_x0", "scale_x1", "micrometers"],
     ].values[0]
 
-    for i in range(grid_size + 1):
-        y = [i * (height / grid_size)] * 2
-        x = [0, image.shape[1]]
-        image_fig.add_scatter(x=x, y=y, line=dict(color="#ffe476"))
-
-    for i in range(grid_size + 1):
-        x = [i * (image.shape[1] / grid_size)] * 2
-        y = [0, height]
-        image_fig.add_scatter(x=x, y=y, line=dict(color="#ffe476"))
-
+    add_grid(image_fig, image.shape[1], height, grid_size * crops_size, "#ffe476")
+    add_grid(image_fig, image.shape[1], height, crops_size, "#03cea4")
     draw_height_and_scale(
         image_fig, image.shape, height, scale_x0, scale_x1, micrometers
     )
@@ -189,24 +222,32 @@ def figure_widget_for_image_and_masks(image, masks):
     return image_and_masks_fig
 
 
+def image_width(image):
+    return image.shape[1]
+
+
 def run_sam_for_image(
     metadata,
     image_filepath,
     sam_checkpoint_filepath,
     crop_n_layers,
-    points_per_side,
+    crops_per_side,
+    points_per_crop,
+    sam_config: dict,
 ):
-    image_height_adjustment, scale_x0, scale_x1, micrometers = metadata.loc[
+    height, scale_x0, scale_x1, micrometers = metadata.loc[
         metadata["filepath"] == image_filepath,
         ["height", "scale_x0", "scale_x1", "micrometers"],
     ].values[0]
-    image_height_adjustment = int(image_height_adjustment)
+    height = int(height)
     image = read_image(image_filepath, with_alpha=False)
+    width = image_width(image)
     masks = run_sam(
-        image[:image_height_adjustment, :, :],
+        image[: height // crops_per_side, : width // crops_per_side, :],
         sam_checkpoint_filepath,
         crop_n_layers=crop_n_layers,
-        points_per_side=points_per_side,
+        points_per_crop=points_per_crop,
+        sam_config=sam_config,
     )
 
     def area_predicate(mask):
@@ -253,19 +294,26 @@ def compute_masks_features(image_filepath, image, masks) -> pd.DataFrame:
     Input(id("run-sam-button"), "n_clicks"),
     State(id("image-filepath"), "value"),
     State(id("sam-checkpoint-filepath"), "value"),
+    State(id("crops-per-side"), "value"),
     State(id("grid-size"), "value"),
     State(id("crop-n-layers"), "value"),
+    State(id("sam-config"), "value"),
     prevent_initial_call=True,
 )
 def handle_run_sam_button_click(
     n_clicks,
     image_filepath,
     sam_checkpoint_filepath,
-    points_per_side,
+    crops_per_side,
+    points_per_crop,
     crop_n_layers,
+    sam_config,
 ):
     if not n_clicks or not image_filepath:
         raise PreventUpdate
+
+    sam_config = {**json.loads(sam_config)}
+    save_sam_config(sam_config)
 
     metadata = read_images_metadata()
     if is_completed(metadata, image_filepath):
@@ -279,7 +327,9 @@ def handle_run_sam_button_click(
         image_filepath=image_filepath,
         sam_checkpoint_filepath=sam_checkpoint_filepath,
         crop_n_layers=crop_n_layers,
-        points_per_side=points_per_side,
+        crops_per_side=crops_per_side,
+        points_per_crop=points_per_crop,
+        sam_config=sam_config,
     )
     features_df = compute_masks_features(image_filepath, image, masks)
 
@@ -294,17 +344,24 @@ def handle_run_sam_button_click(
     Output(id("run-for-all-button"), "style"),
     Input(id("run-for-all-button"), "n_clicks"),
     State(id("sam-checkpoint-filepath"), "value"),
+    State(id("crops-per-side"), "value"),
     State(id("grid-size"), "value"),
     State(id("crop-n-layers"), "value"),
+    State(id("sam-config"), "value"),
 )
 def handle_run_for_all_button(
     n_clicks,
     sam_checkpoint_filepath,
-    points_per_side,
+    crops_per_side,
+    points_per_crop,
     crop_n_layers,
+    sam_config,
 ):
     if not n_clicks:
         raise PreventUpdate
+
+    sam_config = {**json.loads(sam_config)}
+    save_sam_config(sam_config)
 
     metadata = read_images_metadata()
     image_filepaths = []
@@ -332,7 +389,9 @@ def handle_run_for_all_button(
             image_filepath=image_filepath,
             sam_checkpoint_filepath=sam_checkpoint_filepath,
             crop_n_layers=crop_n_layers,
-            points_per_side=points_per_side,
+            crops_per_side=crops_per_side,
+            points_per_crop=points_per_crop,
+            sam_config=sam_config,
         )
         features_df = compute_masks_features(image_filepath, image, masks)
 

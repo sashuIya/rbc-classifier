@@ -43,7 +43,7 @@ def sam_model_version(sam_checkpoint_filepath):
     return None
 
 
-def run_sam(image, sam_checkpoint_filepath, crop_n_layers, points_per_side):
+def run_sam(image, sam_checkpoint_filepath, crop_n_layers, points_per_crop, sam_config):
     if DEVICE == "cuda":
         torch.cuda.empty_cache()
 
@@ -53,14 +53,9 @@ def run_sam(image, sam_checkpoint_filepath, crop_n_layers, points_per_side):
     sam.to(device=DEVICE)
     mask_generator = SamAutomaticMaskGenerator(
         model=sam,
-        points_per_side=points_per_side,
-        points_per_batch=16,
-        # pred_iou_thresh=0.95,
-        # stability_score_thresh=0.92,
+        points_per_side=points_per_crop,
         crop_n_layers=crop_n_layers,
-        crop_n_points_downscale_factor=1,
-        min_mask_region_area=100,  # Requires open-cv to run post-processing
-        # output_mode='coco_rle',
+        **sam_config,
     )
 
     masks = mask_generator.generate(image)

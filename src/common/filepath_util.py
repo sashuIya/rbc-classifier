@@ -1,8 +1,6 @@
-import glob
 import json
 import os
 import pickle
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List
@@ -15,6 +13,7 @@ import torch
 
 from src.common.consts import (
     CLASSIFIER_CHECKPOINT_DIR,
+    DEFAULT_SAM_CONFIG,
     EMBEDDERS_METADATA_FILEPATH,
     IMAGES_METADATA_FILEPATH,
     INTERIM_DATA_DIR,
@@ -24,6 +23,7 @@ from src.common.consts import (
     LABELING_MODE_COLUMN,
     LABELS_METADATA_FILEPATH,
     RAW_IMAGES_DIR,
+    SAM_LATEST_USED_CONFIG_FILEPATH,
     Y_COLUMN,
 )
 
@@ -341,3 +341,20 @@ def read_labeled_and_reviewed_features_for_all_images(check_data=False) -> pd.Da
 def read_labels_metadata() -> pd.DataFrame:
     df = pd.read_csv(LABELS_METADATA_FILEPATH, index_col=None)
     return df
+
+
+def load_lastest_sam_config() -> dict:
+    # Load the configuration from the file if it exists, else use the default configuration
+    if Path(SAM_LATEST_USED_CONFIG_FILEPATH).is_file():
+        print("aha")
+        with open(SAM_LATEST_USED_CONFIG_FILEPATH, "r") as file:
+            return json.load(file)
+    else:
+        print("ugu")
+        return DEFAULT_SAM_CONFIG
+
+
+def save_sam_config(config: dict):
+    # Save the configuration to the file
+    with open(SAM_LATEST_USED_CONFIG_FILEPATH, "w") as file:
+        json.dump(config, file, indent=4)
