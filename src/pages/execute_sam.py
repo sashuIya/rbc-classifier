@@ -140,13 +140,27 @@ layout = dbc.Container(
                         children=html.Div(id=id("loading-sam-output")),
                     ),
                     html.Div(style={"padding": "10px"}),
-                    dcc.Slider(1, 10, 1, id=id("crops-per-side"), value=1),
-                    dcc.Slider(5, 300, 5, id=id("grid-size"), value=5),
+                    dcc.Slider(
+                        1,
+                        10,
+                        1,
+                        id=id("crops-per-side"),
+                        value=1,
+                        className="crops_per_side_slider",
+                    ),
+                    dcc.Slider(
+                        5,
+                        300,
+                        5,
+                        id=id("grid-size"),
+                        value=5,
+                        className="points_per_side_slider",
+                    ),
                     html.Div(style={"padding": "10px"}),
                     dbc.Label("crop-n-layers"),
                     dbc.RadioItems([0, 1, 2, 3], 0, id=id("crop-n-layers")),
-                ]
-            )
+                ],
+            ),
         ),
         dbc.Row(
             [
