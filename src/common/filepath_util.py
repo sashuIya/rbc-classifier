@@ -28,7 +28,9 @@ from src.common.consts import (
 )
 
 
-def get_rel_filepaths_from_subfolders(folder_path, extension, exclude=None):
+def get_rel_filepaths_from_subfolders(
+    folder_path, extension, exclude=None
+) -> List[Path]:
     folder_path = Path(folder_path)
     search_pattern = folder_path.glob(f"**/*.{extension}")
 
@@ -54,12 +56,12 @@ def _get_masks_folder_path(image_filepath: str) -> Path:
     return _get_interim_folder_path(image_filepath) / "masks"
 
 
-def _get_masks_features_folder_path(image_filepath: str):
+def _get_masks_features_folder_path(image_filepath: str) -> Path:
     image_filepath = Path(image_filepath)
     return _get_interim_folder_path(image_filepath) / "mask_features"
 
 
-def get_classifier_model_filepaths():
+def get_classifier_model_filepaths() -> List[Path]:
     filepaths = get_rel_filepaths_from_subfolders(
         folder_path=CLASSIFIER_CHECKPOINT_DIR, extension="pth"
     )
@@ -158,15 +160,15 @@ class ImageDataWriter:
         )
 
 
-def read_images_metadata():
+def read_images_metadata() -> pd.DataFrame:
     if not os.path.exists(LABELS_METADATA_FILEPATH):
         return pd.DataFrame(columns=["filepath"])
 
     return pd.read_csv(IMAGES_METADATA_FILEPATH, index_col=None)
 
 
-def write_images_metadata(images_metadata: pd.DataFrame):
-    return images_metadata.to_csv(IMAGES_METADATA_FILEPATH, index=False, header=True)
+def write_images_metadata(images_metadata: pd.DataFrame) -> None:
+    images_metadata.to_csv(IMAGES_METADATA_FILEPATH, index=False, header=True)
 
 
 def read_image(image_filepath, with_alpha=False):
