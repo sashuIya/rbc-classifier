@@ -5,6 +5,7 @@ import pickle
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, List
 
 import cv2
 import faiss
@@ -28,66 +29,133 @@ from src.common.consts import (
 
 
 def get_rel_filepaths_from_subfolders(folder_path, extension, exclude=None):
-    search_pattern = folder_path + "/**/*.{}".format(extension)
-    filepaths = glob.glob(search_pattern, recursive=True)
+    folder_path = Path(folder_path)
+    search_pattern = folder_path.glob(f"**/*.{extension}")
+
+    filepaths = list(search_pattern)
     if exclude is not None:
-        filepaths = [filepath for filepath in filepaths if exclude not in filepath]
+        filepaths = [filepath for filepath in filepaths if exclude not in str(filepath)]
+
     return sorted(filepaths)
 
 
-def get_masks_filepath(image_filepath: str, suffix: str) -> Path:
-    image_filepath = Path(image_filepath)
-
-    masks_filepath = (
+def _get_interim_folder_path(image_filepath: Path) -> Path:
+    folder_path = (
         INTERIM_DATA_DIR
         / image_filepath.parent.relative_to(RAW_IMAGES_DIR)
         / image_filepath.stem
-        / f"masks/masks{suffix}.pkl"
     )
-    return masks_filepath
+
+    return folder_path
 
 
-def get_masks_features_filepath(image_filepath: str, suffix: str = "") -> Path:
+def _get_masks_folder_path(image_filepath: str) -> Path:
     image_filepath = Path(image_filepath)
+    return _get_interim_folder_path(image_filepath) / "masks"
 
-    mask_features_filepath = (
-        INTERIM_DATA_DIR
-        / image_filepath.parent.relative_to(RAW_IMAGES_DIR)
-        / image_filepath.stem
-        / f"mask_features/features{suffix}.csv"
-    )
-    return mask_features_filepath
+
+def _get_masks_features_folder_path(image_filepath: str):
+    image_filepath = Path(image_filepath)
+    return _get_interim_folder_path(image_filepath) / "mask_features"
 
 
 def get_classifier_model_filepaths():
     filepaths = get_rel_filepaths_from_subfolders(
         folder_path=CLASSIFIER_CHECKPOINT_DIR, extension="pth"
     )
-    filepaths.sort(key=os.path.getctime, reverse=True)
+    filepaths = sorted(filepaths, key=lambda x: x.stat().st_ctime, reverse=True)
 
     return filepaths
 
 
-def read_masks_features(image_filepath, suffix=""):
-    masks_features_filepath = get_masks_features_filepath(image_filepath, suffix=suffix)
-    if not masks_features_filepath.exists():
-        return None
+class ImageDataReader:
+    def __init__(self, image_filepath: str):
+        self.image_filepath = Path(image_filepath)
+        self.masks_folder_path = _get_masks_folder_path(image_filepath)
+        self.masks_features_folder_path = _get_masks_features_folder_path(
+            image_filepath
+        )
 
-    return pd.read_csv(masks_features_filepath, index_col=None)
+    def masks_options(self) -> List[str]:
+        mask_features_filepaths = get_rel_filepaths_from_subfolders(
+            self.masks_features_folder_path, "csv"
+        )
+
+        # Sort the list by creation date, most recent first.
+        mask_features_filepaths = sorted(
+            mask_features_filepaths, key=lambda x: x.stat().st_ctime, reverse=True
+        )
+
+        return [f.stem for f in mask_features_filepaths]
+
+    def read_masks(self, masks_option: str) -> Dict:
+        masks_filepath = self.masks_folder_path / (masks_option + ".pkl")
+        if not masks_filepath.exists():
+            print(f"{masks_filepath} does not exist")
+            return None
+
+        with open(masks_filepath, "rb") as f:
+            masks = pickle.load(f)
+
+        sorted_masks = sorted(masks, key=(lambda x: x["area"]))
+        for i, mask in enumerate(sorted_masks):
+            mask["id"] = i
+
+        return sorted_masks
+
+    def read_masks_features(self, masks_option: str) -> pd.DataFrame:
+        masks_features_filepath = self.masks_features_folder_path / (
+            masks_option + ".csv"
+        )
+
+        if not masks_features_filepath.exists():
+            return None
+
+        return pd.read_csv(masks_features_filepath, index_col=None)
+
+    def read_latest_masks(self):
+        masks_options = self.masks_options()
+        if len(masks_options) == 0:
+            return None
+
+        return self.read_masks(masks_options[0])
+
+    def read_latest_masks_features(self):
+        masks_options = self.masks_options()
+        if len(masks_options) == 0:
+            return None
+
+        return self.read_masks_features(masks_options[0])
 
 
-def write_masks_features(
-    masks_features_df: pd.DataFrame, image_filepath: str, suffix=""
-):
-    mask_features_filepath = get_masks_features_filepath(image_filepath, suffix=suffix)
-    if not mask_features_filepath.parent.exists():
-        mask_features_filepath.parent.mkdir(parents=True, exist_ok=True)
+class ImageDataWriter:
+    def __init__(self, image_filepath: str):
+        self.image_filepath = Path(image_filepath)
+        self.masks_folder_path = _get_masks_folder_path(image_filepath)
+        self.masks_features_folder_path = _get_masks_features_folder_path(
+            image_filepath
+        )
 
-    masks_features_df.to_csv(
-        mask_features_filepath,
-        index=False,
-        header=True,
-    )
+    def write_masks(self, masks, name: str):
+        masks_filepath = self.masks_folder_path / (name + ".pkl")
+
+        if not masks_filepath.parent.exists():
+            masks_filepath.parent.mkdir(parents=True, exist_ok=True)
+
+        print(f"saving to {masks_filepath}")
+        with masks_filepath.open("wb") as f:
+            pickle.dump(masks, f)
+
+    def write_masks_features(self, masks_features_df: pd.DataFrame, name: str):
+        mask_features_filepath = self.masks_features_folder_path / (name + ".csv")
+        if not mask_features_filepath.parent.exists():
+            mask_features_filepath.parent.mkdir(parents=True, exist_ok=True)
+
+        masks_features_df.to_csv(
+            mask_features_filepath,
+            index=False,
+            header=True,
+        )
 
 
 def read_images_metadata():
@@ -109,38 +177,6 @@ def read_image(image_filepath, with_alpha=False):
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
     return image
-
-
-def read_masks(masks_filepath):
-    with open(masks_filepath, "rb") as f:
-        masks = pickle.load(f)
-    return masks
-
-
-def read_masks_for_image(image_filepath, suffix=""):
-    masks_filepath = get_masks_filepath(image_filepath, suffix)
-    if not masks_filepath.exists():
-        return None
-
-    with masks_filepath.open("rb") as f:
-        masks = pickle.load(f)
-
-    sorted_masks = sorted(masks, key=(lambda x: x["area"]))
-    for i, mask in enumerate(sorted_masks):
-        mask["id"] = i
-
-    return sorted_masks
-
-
-def write_masks(masks, image_filepath, suffix=""):
-    masks_filepath = get_masks_filepath(image_filepath, suffix)
-
-    if not masks_filepath.parent.exists():
-        masks_filepath.parent.mkdir(parents=True, exist_ok=True)
-
-    print(f"saving to {masks_filepath}")
-    with masks_filepath.open("wb") as f:
-        pickle.dump(masks, f)
 
 
 class EmbedderMetadata:
@@ -252,24 +288,26 @@ def read_features_for_all_images(check_data=False) -> pd.DataFrame:
     print("read_features_for_all_images running")
     for image_filepath in image_filepaths:
         print("  ", image_filepath)
-        masks_features = read_masks_features(image_filepath)
+        image_data_reader = ImageDataReader(image_filepath)
+        for masks_option in image_data_reader.masks_options():
+            masks_features = image_data_reader.read_masks_features(masks_option)
 
-        if masks_features is None:
-            print("    no masks found")
-            continue
-
-        if check_data:
-            masks = read_masks_for_image(image_filepath)
-            if len(masks) != masks_features.shape[0]:
-                print(
-                    "masks and features of {} are not compatible: {} (masks) vs {} (features)".format(
-                        image_filepath, len(masks), masks_features.shape[0]
-                    )
-                )
+            if masks_features is None:
+                print("    no masks found")
                 continue
 
-        print("    adding {} masks".format(len(masks_features)))
-        all_labeled_data.append(masks_features)
+            if check_data:
+                masks = image_data_reader.read_masks(masks_option)
+                if len(masks) != masks_features.shape[0]:
+                    print(
+                        "masks and features of {} are not compatible: {} (masks) vs {} (features)".format(
+                            image_filepath, len(masks), masks_features.shape[0]
+                        )
+                    )
+                    continue
+
+            print("    adding {} masks".format(len(masks_features)))
+            all_labeled_data.append(masks_features)
 
     print("read_features_for_all_images done")
 

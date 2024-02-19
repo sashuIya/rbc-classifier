@@ -1,8 +1,10 @@
 import os
 import warnings
+from datetime import datetime
 
 import dash_bootstrap_components as dbc
 import numpy as np
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from dash import Input, Output, State, callback, dcc, html, register_page
@@ -11,12 +13,10 @@ from skimage import measure
 from tqdm import tqdm
 
 from src.common.filepath_util import (
+    ImageDataWriter,
     get_rel_filepaths_from_subfolders,
     read_image,
     read_images_metadata,
-    read_masks_for_image,
-    write_masks,
-    write_masks_features,
 )
 from src.pages.widgets.image_selector import (
     image_selection_dropdown,
@@ -38,6 +38,7 @@ SAM_CHECKPOINTS_FOLDER = os.path.normpath("./model/sam/")
 SAM_CHECKPOINT_FILEPATHS = get_rel_filepaths_from_subfolders(
     folder_path=SAM_CHECKPOINTS_FOLDER, extension="pth"
 )
+SAM_CHECKPOINT_FILEPATHS = [str(f) for f in SAM_CHECKPOINT_FILEPATHS]
 
 HEIGHT_FULL = "full"
 HEIGHT_VALUES = [HEIGHT_FULL, 1024, 2048]
@@ -80,25 +81,12 @@ layout = dbc.Container(
                     html.Div(style={"padding": "10px"}),
                     html.Div("Image height without scaling:", id=id("image-height")),
                     html.Div(style={"padding": "10px"}),
-                    dbc.Checklist(
-                        [USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION],
-                        value=[USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION],
-                        id=id("grid-size-as-suffix"),
-                        switch=True,
-                    ),
                     html.Div(style={"padding": "10px"}),
                     dbc.Button(
                         "Run SAM",
                         color="primary",
                         className="me-1",
                         id=id("run-sam-button"),
-                        n_clicks=0,
-                    ),
-                    dbc.Button(
-                        "Compute and save features",
-                        color="primary",
-                        className="me-1",
-                        id=id("compute-features-button"),
                         n_clicks=0,
                     ),
                     html.Div(style={"padding": "10px"}),
@@ -207,7 +195,6 @@ def run_sam_for_image(
     sam_checkpoint_filepath,
     crop_n_layers,
     points_per_side,
-    points_per_side_as_suffix: list,
 ):
     image_height_adjustment, scale_x0, scale_x1, micrometers = metadata.loc[
         metadata["filepath"] == image_filepath,
@@ -239,12 +226,24 @@ def run_sam_for_image(
     masks = [mask for mask in masks if connected_components_predicate(mask)]
     print("Number of masks after filtering by connectivity: {}".format(len(masks)))
 
-    suffix = ""
-    if USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION in points_per_side_as_suffix:
-        suffix = suffix_for_masks_file(points_per_side)
-    write_masks(masks, image_filepath, suffix=suffix)
+    sorted_masks = sorted(masks, key=(lambda x: x["area"]))
+    for i, mask in enumerate(sorted_masks):
+        mask["id"] = i
 
-    return image, masks
+    return image, sorted_masks
+
+
+def compute_masks_features(image_filepath, image, masks) -> pd.DataFrame:
+    resnet_features, resnet_columns = compute_resnet_features(masks, image)
+    measure_features, measure_columns = compute_measure_features(masks, image_filepath)
+
+    all_features = np.concatenate([resnet_features, measure_features], axis=1)
+    all_columns = resnet_columns + measure_columns
+    features_df = construct_features_dataframe(
+        image_filepath, masks, all_features, all_columns
+    )
+
+    return features_df
 
 
 @callback(
@@ -256,7 +255,6 @@ def run_sam_for_image(
     State(id("sam-checkpoint-filepath"), "value"),
     State(id("grid-size"), "value"),
     State(id("crop-n-layers"), "value"),
-    State(id("grid-size-as-suffix"), "value"),
     prevent_initial_call=True,
 )
 def handle_run_sam_button_click(
@@ -265,17 +263,16 @@ def handle_run_sam_button_click(
     sam_checkpoint_filepath,
     points_per_side,
     crop_n_layers,
-    points_per_side_as_suffix: list,
 ):
     if not n_clicks or not image_filepath:
         raise PreventUpdate
 
     metadata = read_images_metadata()
-    if (
-        is_completed(metadata, image_filepath)
-        and USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION not in points_per_side_as_suffix
-    ):
+    if is_completed(metadata, image_filepath):
         return {}, {}, True
+
+    timestamp = datetime.now()
+    filename_timestamp = timestamp.strftime("%Y-%m-%d_%H-%M-%S")
 
     image, masks = run_sam_for_image(
         metadata=metadata,
@@ -283,59 +280,14 @@ def handle_run_sam_button_click(
         sam_checkpoint_filepath=sam_checkpoint_filepath,
         crop_n_layers=crop_n_layers,
         points_per_side=points_per_side,
-        points_per_side_as_suffix=points_per_side_as_suffix,
     )
+    features_df = compute_masks_features(image_filepath, image, masks)
+
+    image_data_writer = ImageDataWriter(image_filepath)
+    image_data_writer.write_masks(masks, filename_timestamp)
+    image_data_writer.write_masks_features(features_df, filename_timestamp)
 
     return figure_widget_for_image_and_masks(image, masks), {}, False
-
-
-def compute_and_write_masks_features(
-    image_filepath, image, masks, points_per_side, points_per_side_as_suffix
-):
-    resnet_features, resnet_columns = compute_resnet_features(masks, image)
-    measure_features, measure_columns = compute_measure_features(masks, image_filepath)
-
-    all_features = np.concatenate([resnet_features, measure_features], axis=1)
-    all_columns = resnet_columns + measure_columns
-    features_df = construct_features_dataframe(
-        image_filepath, masks, all_features, all_columns
-    )
-    suffix = ""
-    if USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION in points_per_side_as_suffix:
-        suffix = suffix_for_masks_file(points_per_side)
-    write_masks_features(features_df, image_filepath, suffix=suffix)
-
-
-@callback(
-    Output(id("execute-alert"), "is_open", allow_duplicate=True),
-    Input(id("compute-features-button"), "n_clicks"),
-    State(id("image-filepath"), "value"),
-    State(id("grid-size"), "value"),
-    State(id("grid-size-as-suffix"), "value"),
-    prevent_initial_call=True,
-)
-def handle_compute_features_button_click(
-    n_clicks, image_filepath, points_per_side, points_per_side_as_suffix: list
-):
-    if not n_clicks or not image_filepath:
-        raise PreventUpdate
-
-    metadata = read_images_metadata()
-    if is_completed(metadata, image_filepath):
-        return True
-
-    suffix = ""
-    if USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION in points_per_side_as_suffix:
-        suffix = suffix_for_masks_file(points_per_side)
-
-    image = read_image(image_filepath)
-    masks = read_masks_for_image(image_filepath, suffix=suffix)
-
-    compute_and_write_masks_features(
-        image_filepath, image, masks, points_per_side, points_per_side_as_suffix
-    )
-
-    return False
 
 
 @callback(
@@ -344,14 +296,12 @@ def handle_compute_features_button_click(
     State(id("sam-checkpoint-filepath"), "value"),
     State(id("grid-size"), "value"),
     State(id("crop-n-layers"), "value"),
-    State(id("grid-size-as-suffix"), "value"),
 )
 def handle_run_for_all_button(
     n_clicks,
     sam_checkpoint_filepath,
     points_per_side,
     crop_n_layers,
-    points_per_side_as_suffix: list,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -371,26 +321,23 @@ def handle_run_for_all_button(
     if n_clicks == 1:
         return {}
 
-    suffix = ""
-    if USE_MESH_SIZE_FOR_MASKS_FILE_SUFFIX_OPTION in points_per_side_as_suffix:
-        suffix = suffix_for_masks_file(points_per_side)
+    timestamp = datetime.now()
+    filename_timestamp = timestamp.strftime("%Y-%m-%d_%H-%M-%S")
 
     for image_filepath in tqdm(image_filepaths, desc="Running pipeline"):
         print("Executing for", image_filepath)
 
-        run_sam_for_image(
+        image, masks = run_sam_for_image(
             metadata=metadata,
             image_filepath=image_filepath,
             sam_checkpoint_filepath=sam_checkpoint_filepath,
             crop_n_layers=crop_n_layers,
             points_per_side=points_per_side,
-            points_per_side_as_suffix=points_per_side_as_suffix,
         )
+        features_df = compute_masks_features(image_filepath, image, masks)
 
-        image = read_image(image_filepath)
-        masks = read_masks_for_image(image_filepath, suffix=suffix)
-        compute_and_write_masks_features(
-            image_filepath, image, masks, points_per_side, points_per_side_as_suffix
-        )
+        image_data_writer = ImageDataWriter(image_filepath)
+        image_data_writer.write_masks(masks, filename_timestamp)
+        image_data_writer.write_masks_features(features_df, filename_timestamp)
 
     return {}

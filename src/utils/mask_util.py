@@ -16,7 +16,7 @@ from src.common.consts import (
     LABELING_MODE_COLUMN,
     MASK_ID_COLUMN,
 )
-from src.common.filepath_util import get_masks_filepath, read_images_metadata
+from src.common.filepath_util import read_images_metadata
 
 DEVICE = "cuda"
 RESNET_BATCH_SIZE = 64

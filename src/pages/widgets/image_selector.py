@@ -9,6 +9,7 @@ from src.common.filepath_util import (
 TIF_FILEPATHS = get_rel_filepaths_from_subfolders(
     folder_path=RAW_IMAGES_DIR, extension="tif", exclude="result"
 )
+TIF_FILEPATHS = [str(f) for f in TIF_FILEPATHS]
 
 
 def is_completed(df, filepath):

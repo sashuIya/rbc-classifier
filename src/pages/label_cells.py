@@ -37,15 +37,13 @@ from src.common.consts import (
 )
 from src.common.filepath_util import (
     EmbedderMetadata,
+    ImageDataReader,
+    ImageDataWriter,
     get_classifier_model_filepaths,
-    get_masks_features_filepath,
     read_image,
     read_images_metadata,
     read_labels_metadata,
-    read_masks_features,
-    read_masks_for_image,
     write_images_metadata,
-    write_masks_features,
 )
 from src.models.train_classifier import (
     classify,
@@ -76,6 +74,10 @@ DISPLAY_OPTIONS = [
 
 ALL_MASKS_RADIO_BUTTONS_PREFIX = "all-masks"
 SELECTED_MASKS_RADIO_BUTTONS_PREFIX = "selected-masks"
+
+
+def is_valid_masks_option(masks_option: str) -> bool:
+    return masks_option is not None and masks_option != "None"
 
 
 def masks_display_option(display_option: str) -> MasksColorOptions:
@@ -124,6 +126,7 @@ id = id_factory("label-cells")
 register_page(__name__, order=2)
 
 CLASSIFIER_MODEL_FILEPATHS = get_classifier_model_filepaths()
+CLASSIFIER_MODEL_FILEPATHS = [str(f) for f in CLASSIFIER_MODEL_FILEPATHS]
 if not CLASSIFIER_MODEL_FILEPATHS:
     CLASSIFIER_MODEL_FILEPATHS = ["none"]
 
@@ -143,6 +146,7 @@ layout = dbc.Container(
             CLASSIFIER_MODEL_FILEPATHS[0],
             id=id("classifier-model"),
         ),
+        dcc.Dropdown([], None, id=id("masks-options")),
         dbc.Button(
             "Train classifier on labeled data",
             id=id("train-classifier-button"),
@@ -268,7 +272,6 @@ layout = dbc.Container(
         ),
         dcc.Store(id=id("labeled-masks")),
         dcc.Store(id=id("modified-labels")),
-        dcc.Store(id=id("figure-store")),
     ],
     fluid=True,
 )
@@ -422,18 +425,20 @@ def generate_labeled_masks_previews(
 
 @timeit
 def image_with_masks_figure_as_scatters(
-    image_filepath: str, display_option: str, labels_df: pd.DataFrame
+    image_filepath: str,
+    display_option: str,
+    labels_df: pd.DataFrame,
+    selected_masks_option: str,
 ) -> go.Figure:
     image = read_image(image_filepath, with_alpha=False)
     fig = px.imshow(image, binary_string=True, binary_backend="jpg")
     fig.update_layout(autosize=False, width=1024, height=1024)
 
-    masks = read_masks_for_image(image_filepath)
+    image_data_reader = ImageDataReader(image_filepath)
+    masks = image_data_reader.read_masks(selected_masks_option)
 
     assert len(masks) == labels_df.shape[0], (
-        "Labels do not correspond to the masks."
-        "Probably you updated the masks."
-        "Consider removing {}".format(get_masks_features_filepath(image_filepath))
+        "Labels do not correspond to the masks." "Probably you updated the masks."
     )
 
     color_by_mask_id = create_color_by_mask_id(labels_df)
@@ -473,15 +478,17 @@ def image_with_masks_figure_as_scatters(
 
 
 def image_with_masks_figure(
-    image_filepath: str, display_option: str, labels_df: pd.DataFrame
+    image_filepath: str,
+    display_option: str,
+    labels_df: pd.DataFrame,
+    selected_masks_option: str,
 ) -> go.Figure:
     image = read_image(image_filepath, with_alpha=False)
-    masks = read_masks_for_image(image_filepath)
+    image_data_reader = ImageDataReader(image_filepath)
+    masks = image_data_reader.read_masks(selected_masks_option)
 
     assert len(masks) == labels_df.shape[0], (
-        "Labels do not correspond to the masks."
-        "Probably you updated the masks."
-        "Consider removing {}".format(get_masks_features_filepath(image_filepath))
+        "Labels do not correspond to the masks." "Probably you updated the masks."
     )
 
     color_by_mask_id = create_color_by_mask_id(labels_df)
@@ -628,7 +635,11 @@ def handle_selected_masks_radio_button_click(labels, ids, labeled_masks: dict):
 )
 @timeit
 def handle_canvas_click(
-    click_data, active_label: str, labeled_masks_dict: dict, image_filepath: str
+    click_data,
+    active_label: str,
+    labeled_masks_dict: dict,
+    image_filepath: str,
+    selected_masks_option: str,
 ):
     if not click_data:
         raise PreventUpdate
@@ -639,7 +650,8 @@ def handle_canvas_click(
     x, y = point["x"], point["y"]
 
     image = read_image(image_filepath)
-    masks = read_masks_for_image(image_filepath)
+    image_data_reader = ImageDataReader(image_filepath)
+    masks = image_data_reader.read_masks(selected_masks_option)
 
     assert len(masks) == labeled_masks_df.shape[0]
 
@@ -670,10 +682,13 @@ def handle_canvas_click(
     Input(id("save-labels-button"), "n_clicks"),
     State(id("labeled-masks"), "data"),
     State(id("image-filepath"), "value"),
+    State(id("masks-options"), "value"),
 )
 @timeit
-def handle_save_labels_button_click(n_clicks, labeled_masks_df, image_filepath):
-    if n_clicks == 0 or not labeled_masks_df:
+def handle_save_labels_button_click(
+    n_clicks, labeled_masks_df, image_filepath, selected_masks_option
+):
+    if n_clicks == 0 or not labeled_masks_df or not selected_masks_option:
         raise PreventUpdate
 
     labeled_masks_df = pd.DataFrame(labeled_masks_df)
@@ -685,14 +700,16 @@ def handle_save_labels_button_click(n_clicks, labeled_masks_df, image_filepath):
         LABELING_MODE_COLUMN,
     ] = LABELING_APPROVED
 
-    masks_features = read_masks_features(image_filepath)
+    image_data_reader = ImageDataReader(image_filepath)
+    masks_features = image_data_reader.read_masks_features(selected_masks_option)
     labeled_masks_df.index = masks_features.index
     masks_features[labeled_masks_df.columns] = labeled_masks_df
 
-    write_masks_features(masks_features, image_filepath)
+    image_data_writer = ImageDataWriter(image_filepath)
+    image_data_writer.write_masks_features(masks_features, selected_masks_option)
 
     image = read_image(image_filepath)
-    masks = read_masks_for_image(image_filepath)
+    masks = image_data_reader.read_masks(selected_masks_option)
     color_by_mask_id = create_color_by_mask_id(labeled_masks_df)
     image = get_masks_img(
         masks,
@@ -746,22 +763,70 @@ def perform_stats_change(labeled_masks_dict):
     Input(id("display-options"), "value"),
     Input(id("labeled-masks"), "data"),
     State(id("image-filepath"), "value"),
+    State(id("masks-options"), "value"),
 )
 @timeit
-def perform_canvas_change(display_option, labeled_masks_dict, image_filepath):
-    if not image_filepath:
+def perform_canvas_change(
+    display_option, labeled_masks_dict, image_filepath, selected_masks_option
+):
+    if (
+        not image_filepath
+        or not labeled_masks_dict
+        or not is_valid_masks_option(selected_masks_option)
+    ):
         raise PreventUpdate
 
     labeled_masks_df = pd.DataFrame(labeled_masks_dict)
 
     # ? Maybe use `image_with_masks_figure_as_scatters` instead?
-    return image_with_masks_figure(image_filepath, display_option, labeled_masks_df)
+    return image_with_masks_figure(
+        image_filepath, display_option, labeled_masks_df, selected_masks_option
+    )
 
 
 @callback(
     Output(id("labeled-masks"), "data"),
-    Output(id("completed-checkbox"), "value"),
     Output(id("all-masks"), "children"),
+    Input(id("masks-options"), "value"),
+    State(id("image-filepath"), "value"),
+)
+@timeit
+def handle_masks_filepath_selection(selected_masks_option, image_filepath):
+    if not image_filepath or not is_valid_masks_option(selected_masks_option):
+        raise PreventUpdate
+
+    image_data_reader = ImageDataReader(image_filepath)
+    print(selected_masks_option)
+    masks = image_data_reader.read_masks(selected_masks_option)
+    labeled_masks_df = image_data_reader.read_masks_features(selected_masks_option)
+    print("read labeled_masks, shape", labeled_masks_df.shape)
+    print(labeled_masks_df[[MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN]].head())
+
+    labeled_masks_df = labeled_masks_df[
+        [MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN]
+    ]
+
+    image = read_image(image_filepath)
+    assert len(masks) == labeled_masks_df.shape[0]
+
+    crop_infos = []
+    for (_, row), mask in zip(labeled_masks_df.iterrows(), masks):
+        assert mask["id"] == row[MASK_ID_COLUMN], (mask["id"], row[MASK_ID_COLUMN])
+        crop_infos.append(
+            generate_labeled_mask_preview_info(image, mask, row[Y_COLUMN])
+        )
+
+    all_mask_previews = generate_labeled_masks_previews(
+        ALL_MASKS_RADIO_BUTTONS_PREFIX, crop_infos
+    )
+
+    return labeled_masks_df.to_dict(), all_mask_previews
+
+
+@callback(
+    Output(id("completed-checkbox"), "value"),
+    Output(id("masks-options"), "options"),
+    Output(id("masks-options"), "value"),
     Input(id("image-filepath"), "value"),
 )
 @timeit
@@ -771,14 +836,6 @@ def handle_image_filepath_selection(image_filepath):
 
     print("Image filepath changed")
 
-    labeled_masks_df = read_masks_features(image_filepath)
-    print("read labeled_masks, shape", labeled_masks_df.shape)
-    print(labeled_masks_df[[MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN]].head())
-
-    labeled_masks_df = labeled_masks_df[
-        [MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN]
-    ]
-
     images_metadata = read_images_metadata()
     completed = (
         image_filepath in images_metadata["filepath"].values
@@ -787,25 +844,21 @@ def handle_image_filepath_selection(image_filepath):
         ].iloc[0]
     )
 
-    image = read_image(image_filepath)
-    masks = read_masks_for_image(image_filepath)
-    assert len(masks) == labeled_masks_df.shape[0]
+    image_data_reader = ImageDataReader(image_filepath)
+    masks_options = image_data_reader.masks_options()
+    masks_options_dict = [{"label": "None", "value": "None"}]
+    if masks_options:
+        masks_options_dict = [
+            {"label": mask_name_option, "value": mask_name_option}
+            for mask_name_option in masks_options
+        ]
 
-    crop_infos = []
-    for (_, row), mask in zip(labeled_masks_df.iterrows(), masks):
-        assert mask["id"] == row[MASK_ID_COLUMN]
-        crop_infos.append(
-            generate_labeled_mask_preview_info(image, mask, row[Y_COLUMN])
-        )
-
-    all_mask_previews = generate_labeled_masks_previews(
-        ALL_MASKS_RADIO_BUTTONS_PREFIX, crop_infos
-    )
+    selected_masks_option = masks_options_dict[0]["value"]
 
     return (
-        labeled_masks_df.to_dict(),
         [CHECKBOX_COMPLETED] if completed else [],
-        all_mask_previews,
+        masks_options_dict,
+        selected_masks_option,
     )
 
 
@@ -841,14 +894,23 @@ def handle_train_classifier_button(n_clicks):
     Input(id("run-classifier-button"), "n_clicks"),
     State(id("classifier-model"), "value"),
     State(id("image-filepath"), "value"),
+    State(id("masks-options"), "value"),
     prevent_initial_call=True,
 )
 @timeit
-def handle_run_classifier_button(n_clicks, classifier_model_filepath, image_filepath):
-    if not n_clicks or not image_filepath or not classifier_model_filepath:
+def handle_run_classifier_button(
+    n_clicks, classifier_model_filepath, image_filepath, selected_masks_option
+):
+    if (
+        not n_clicks
+        or not image_filepath
+        or not classifier_model_filepath
+        or not is_valid_masks_option(selected_masks_option)
+    ):
         raise PreventUpdate
 
-    labeled_masks = read_masks_features(image_filepath)
+    image_data_reader = ImageDataReader(image_filepath)
+    labeled_masks = image_data_reader.read_masks_features(selected_masks_option)
     predictions = classify(
         labeled_masks[labeled_masks[Y_COLUMN] == LABEL_UNLABELED],
         classifier_model_filepath,

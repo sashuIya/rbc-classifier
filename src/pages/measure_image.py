@@ -195,7 +195,7 @@ def handle_image_selection(image_filepath):
 @callback(
     Output(id("image-filepath"), "value"),
     Input(id("next-image-button"), "n_clicks"),
-    Input(id("image-filepath"), "value"),
+    State(id("image-filepath"), "value"),
 )
 def handle_next_image_button_click(n_clicks, image_filepath):
     if not n_clicks:

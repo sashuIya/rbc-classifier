@@ -1,8 +1,14 @@
 import os
+import sys
 
 import dash_bootstrap_components as dbc
 from dash import Dash, dcc, html, page_container, page_registry
 from werkzeug.middleware.profiler import ProfilerMiddleware
+
+# ? NOTE: Classifier is defined in a python file under this folder.
+# ? Torch complains when loading classifier without this.
+# ? See https://github.com/pytorch/pytorch/issues/3678#issuecomment-474076294
+sys.path.insert(0, "./src/models")
 
 PROF_DIR = "/tmp/pprof"
 
