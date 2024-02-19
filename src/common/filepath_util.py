@@ -61,11 +61,14 @@ def _get_masks_features_folder_path(image_filepath: str) -> Path:
     return _get_interim_folder_path(image_filepath) / "mask_features"
 
 
-def get_classifier_model_filepaths() -> List[Path]:
+def get_classifier_model_filepaths(as_str: bool = False) -> List[Path]:
     filepaths = get_rel_filepaths_from_subfolders(
         folder_path=CLASSIFIER_CHECKPOINT_DIR, extension="pth"
     )
     filepaths = sorted(filepaths, key=lambda x: x.stat().st_ctime, reverse=True)
+
+    if as_str:
+        filepaths = [str(f) for f in filepaths]
 
     return filepaths
 

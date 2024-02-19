@@ -125,8 +125,7 @@ DEFAULT_LABEL = "red blood cell" if "red blood cell" in LABELS else LABEL_WRONG
 id = id_factory("label-cells")
 register_page(__name__, order=2)
 
-CLASSIFIER_MODEL_FILEPATHS = get_classifier_model_filepaths()
-CLASSIFIER_MODEL_FILEPATHS = [str(f) for f in CLASSIFIER_MODEL_FILEPATHS]
+CLASSIFIER_MODEL_FILEPATHS = get_classifier_model_filepaths(as_str=True)
 if not CLASSIFIER_MODEL_FILEPATHS:
     CLASSIFIER_MODEL_FILEPATHS = ["none"]
 
@@ -882,7 +881,7 @@ def handle_train_classifier_button(n_clicks):
         raise PreventUpdate
 
     train_pipeline()
-    model_filepaths = get_classifier_model_filepaths()
+    model_filepaths = get_classifier_model_filepaths(as_str=True)
     if not model_filepaths:
         return ["none"], "none"
 
