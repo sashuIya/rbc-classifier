@@ -1,4 +1,5 @@
 import colorsys
+
 import numpy as np
 
 
@@ -18,7 +19,7 @@ def generate_contrast_colors(num_colors):
 
 
 def main():
-    print(generate_contrast_colors(5))
+    print(generate_contrast_colors(8))
 
 
 if __name__ == "__main__":

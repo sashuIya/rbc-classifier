@@ -115,6 +115,9 @@ def construct_embedder_metadata_container(embedder_filepath):
 
 LABELS = {
     "red blood cell": {"color": np.array([255, 0, 0])},
+    "intermediate mainly biconcave RBC": {"color": np.array([255, 191, 0])},
+    "intermediate mainly polyhedral RBC": {"color": np.array([127, 255, 0])},
+    "polyhedrocyte": {"color": np.array([0, 255, 63])},
     "spheroid cell": {"color": np.array([0, 255, 102])},
     "echinocyte": {"color": np.array([0, 101, 255])},
     LABEL_WRONG: {"color": np.array([203, 255, 0])},

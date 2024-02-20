@@ -346,11 +346,9 @@ def read_labels_metadata() -> pd.DataFrame:
 def load_lastest_sam_config() -> dict:
     # Load the configuration from the file if it exists, else use the default configuration
     if Path(SAM_LATEST_USED_CONFIG_FILEPATH).is_file():
-        print("aha")
         with open(SAM_LATEST_USED_CONFIG_FILEPATH, "r") as file:
             return json.load(file)
     else:
-        print("ugu")
         return DEFAULT_SAM_CONFIG
 
 
