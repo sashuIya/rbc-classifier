@@ -2,7 +2,7 @@ import json
 import os
 import pickle
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Dict, List
 
 import cv2
@@ -285,14 +285,19 @@ def read_embedder_and_faiss(filepath):
     return embedder_model, faiss_index, labels, label_encoder
 
 
-def read_features_for_all_images(check_data=False) -> pd.DataFrame:
+def read_features_for_all_images(dir: str = None, check_data=False) -> pd.DataFrame:
     """Reads labeled and unlabeled data."""
     metadata = read_images_metadata()
     image_filepaths = metadata["filepath"]
     all_labeled_data = []
-    print("read_features_for_all_images running")
+    print(f"read_features_for_all_images running with glob: {dir}")
     for image_filepath in image_filepaths:
         print("  ", image_filepath)
+
+        if dir is not None and not PurePath(image_filepath).is_relative_to(dir):
+            print(f"skipping {image_filepath}")
+            continue
+
         image_data_reader = ImageDataReader(image_filepath)
         for masks_option in image_data_reader.masks_options():
             masks_features = image_data_reader.read_masks_features(masks_option)
@@ -305,9 +310,7 @@ def read_features_for_all_images(check_data=False) -> pd.DataFrame:
                 masks = image_data_reader.read_masks(masks_option)
                 if len(masks) != masks_features.shape[0]:
                     print(
-                        "masks and features of {} are not compatible: {} (masks) vs {} (features)".format(
-                            image_filepath, len(masks), masks_features.shape[0]
-                        )
+                        f"masks and features of {image_filepath} are not compatible: {len(masks)} (masks) vs {masks_features.shape[0]} (features)"
                     )
                     continue
 
@@ -319,17 +322,11 @@ def read_features_for_all_images(check_data=False) -> pd.DataFrame:
     return pd.concat(all_labeled_data, axis=0)
 
 
-def read_labeled_features_for_all_images(check_data=False) -> pd.DataFrame:
-    """Reads labeled data (manually, auto, and semi-auto labeled)."""
-    df = read_features_for_all_images(check_data=check_data)
-    df = df[df[Y_COLUMN] != LABEL_UNLABELED]
-    print("read {} labeled features (manual, auto, and semi-auto)".format(df.shape[0]))
-    return df
-
-
-def read_labeled_and_reviewed_features_for_all_images(check_data=False) -> pd.DataFrame:
+def read_labeled_and_reviewed_features_for_all_images(
+    dir: str = None, check_data=False
+) -> pd.DataFrame:
     """Reads labeled data (manually and semi-auto labeled)."""
-    df = read_features_for_all_images(check_data=check_data)
+    df = read_features_for_all_images(dir=dir, check_data=check_data)
     df = df[
         (df[Y_COLUMN] != LABEL_UNLABELED)
         & (df[LABELING_MODE_COLUMN].isin([LABELING_MANUAL, LABELING_APPROVED]))

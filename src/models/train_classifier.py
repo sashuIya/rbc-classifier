@@ -153,11 +153,13 @@ def plot_clusters(
     plt.savefig(output_filename)
 
 
-def train_pipeline():
+def train_pipeline(dir: str = None):
     if DEVICE == "cuda":
         torch.cuda.empty_cache()
 
-    labeled_data_df = read_labeled_and_reviewed_features_for_all_images(check_data=True)
+    labeled_data_df = read_labeled_and_reviewed_features_for_all_images(
+        dir, check_data=True
+    )
     assert (
         labeled_data_df.loc[labeled_data_df[Y_COLUMN] == LABEL_UNLABELED].shape[0] == 0
     ), "Should not contain unlabeled data"
@@ -227,12 +229,16 @@ def train_pipeline():
         embedder,
         label_encoder,
     )
-    plot_clusters(
-        val_loader,
-        "val_embedding_visualization.png",
-        embedder,
-        label_encoder,
-    )
+
+    try:
+        plot_clusters(
+            val_loader,
+            "val_embedding_visualization.png",
+            embedder,
+            label_encoder,
+        )
+    except Exception as e:
+        print(f"An unexpected error occurred when plotting validation clusters: {e}")
 
     all_embeddings, all_embedding_labels = embed(embedder, all_loader)
     all_embeddings = all_embeddings / np.linalg.norm(

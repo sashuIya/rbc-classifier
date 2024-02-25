@@ -1,5 +1,6 @@
 import base64
 import os
+from pathlib import PurePath
 
 import cv2
 import dash_bootstrap_components as dbc
@@ -32,6 +33,7 @@ from src.common.consts import (
     # Labeling modes
     LABELING_MODE_COLUMN,
     MASK_ID_COLUMN,
+    RAW_IMAGES_DIR,
     # Features metadata
     Y_COLUMN,
 )
@@ -633,6 +635,7 @@ def handle_selected_masks_radio_button_click(labels, ids, labeled_masks: dict):
     State(id("active-label"), "value"),
     State(id("labeled-masks"), "data"),
     State(id("image-filepath"), "value"),
+    State(id("masks-options"), "value"),
     prevent_initial_call=True,
 )
 @timeit
@@ -720,6 +723,7 @@ def handle_save_labels_button_click(
         color_by_mask_id=color_by_mask_id,
     )
 
+    # ! TODO: Save results under /processed folder.
     result_filepath_base = os.path.splitext(image_filepath)[0] + "_result"
     image_result_filepath = result_filepath_base + ".tif"
     assert image_result_filepath != image_filepath
@@ -877,13 +881,23 @@ def handle_classifier_model_selection(embedder_filepath):
     Output(id("classifier-model"), "options"),
     Output(id("classifier-model"), "value"),
     Input(id("train-classifier-button"), "n_clicks"),
+    State(id("image-filepath"), "value"),
 )
 @timeit
-def handle_train_classifier_button(n_clicks):
+def handle_train_classifier_button(n_clicks, image_filepath):
     if n_clicks == 0:
         raise PreventUpdate
 
-    train_pipeline()
+    dir = None
+    # Train on data that is under the same subfolder of dataset/ as the currently
+    # selected image.
+    if image_filepath is not None:
+        dir = str(
+            PurePath(RAW_IMAGES_DIR)
+            / PurePath(image_filepath).relative_to(RAW_IMAGES_DIR).parts[0]
+        )
+
+    train_pipeline(dir=dir)
     model_filepaths = get_classifier_model_filepaths(as_str=True)
     if not model_filepaths:
         return ["none"], "none"
