@@ -313,14 +313,6 @@ def classify(df, classifier_model_filepath):
         print(f"Embedding {i + 1} Classified Label: {classified_label}")
 
     decoded_predicted_labels = label_encoder.inverse_transform(predicted_labels)
-    # ! TODO: Remove this once a new classifier is trained (after 02/03/2024).
-    for i, label in enumerate(decoded_predicted_labels):
-        if label == "0":
-            decoded_predicted_labels[i] = "red blood cell"
-        if label == "1":
-            decoded_predicted_labels[i] = "spheroid cell"
-        if label == "2":
-            decoded_predicted_labels[i] = "echinocyte"
 
     # Use numpy.unique() to get unique elements and their counts
     unique_elements, counts = np.unique(decoded_predicted_labels, return_counts=True)
