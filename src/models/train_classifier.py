@@ -1,4 +1,8 @@
+from dataclasses import dataclass
+
 import matplotlib
+
+from src.utils.timing import timeit
 
 matplotlib.use("Agg")  # 'Agg' backend is suitable for saving figures to files
 import faiss
@@ -258,7 +262,16 @@ def train_pipeline(dir: str = None):
     )
 
 
-def classify(df, classifier_model_filepath):
+@dataclass
+class KnnClassifyOptions:
+    k: int = 10
+    min_votes: int = 9
+
+
+@timeit
+def classify(
+    df, classifier_model_filepath, options: KnnClassifyOptions = KnnClassifyOptions()
+):
     if DEVICE == "cuda":
         torch.cuda.empty_cache()
 
@@ -294,33 +307,32 @@ def classify(df, classifier_model_filepath):
         embeddings_to_classify, axis=1, keepdims=True
     )
 
-    k = 5
-
-    predicted_labels = []
+    # This is for actual names ('echinocyte', 'intermediate mainly biconcave RBC',
+    # etc).
+    decoded_predicted_labels = []
 
     for i in range(embeddings_to_classify.shape[0]):
         query_embedding = embeddings_to_classify[i : i + 1]
 
-        # Perform a similarity search to find nearest neighbors
-        distances, indices = faiss_index.search(query_embedding.astype(np.float32), k)
+        # Perform a similarity search to find nearest neighbors.
+        distances, indices = faiss_index.search(
+            query_embedding.astype(np.float32), options.k
+        )
 
-        # Determine the majority label among the neighbors
+        # Determine the majority label among the neighbors.
         neighbor_labels = faiss_labels[indices[0]]
         mode_result = mode(neighbor_labels)
-        classified_label = mode_result.mode
-        predicted_labels.append(classified_label)
+        classified_label = LABEL_UNLABELED
+        if mode_result.count >= options.min_votes:
+            classified_label = label_encoder.inverse_transform([mode_result.mode])[0]
+        decoded_predicted_labels.append(classified_label)
 
-        print(f"Embedding {i + 1} Classified Label: {classified_label}")
-
-    decoded_predicted_labels = label_encoder.inverse_transform(predicted_labels)
-
-    # Use numpy.unique() to get unique elements and their counts
-    unique_elements, counts = np.unique(decoded_predicted_labels, return_counts=True)
-
-    # Print the unique elements and their counts
+    # Print the predicted classes and their counts.
+    class_names, counts = np.unique(decoded_predicted_labels, return_counts=True)
     print("Predicted:")
-    for element, count in zip(unique_elements, counts):
-        print(f"    Class {element}: {count} masks")
+    print("{:<50} {:<8}".format("Class", "Count"))
+    for class_name, count in zip(class_names, counts):
+        print(f"{class_name:<50} {count:<8}")
 
     return decoded_predicted_labels
 
