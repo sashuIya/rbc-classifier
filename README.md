@@ -47,3 +47,10 @@
 - The tool allows for manual correction of misclassifications either by interacting with the masks preview or by individually reviewing and adjusting the masks.
 
 <img src="docs/img/sample_fix_labels.png" alt="Manual Label Correction" width="600"/>
+
+## Classification Accuracy
+
+During the development of our model, you can monitor its performance through both training and validation phases. The following visualizations illustrate the model's ability to accurately classify various instances across these stages.
+
+<img src="docs/img/train_embedding_visualization.png" alt="Training Embeddings Visualization" width="600px">
+<img src="docs/img/val_embedding_visualization.png" alt="Validation Embeddings Visualization" width="600px">
