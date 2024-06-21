@@ -75,7 +75,7 @@ def train_embedder(
         )
 
 
-def get_all_embeddings(dataset, model):
+def _get_all_embeddings(dataset, model):
     """Convenient function from pytorch-metric-learning."""
     tester = testers.BaseTester(dataloader_num_workers=1)
     return tester.get_all_embeddings(dataset, model)
@@ -83,8 +83,8 @@ def get_all_embeddings(dataset, model):
 
 def test_embedder(train_set, test_set, model, accuracy_calculator) -> float:
     """Computes and returns accuracy using AccuracyCalculator from pytorch-metric-learning."""
-    train_embeddings, train_labels = get_all_embeddings(train_set, model)
-    test_embeddings, test_labels = get_all_embeddings(test_set, model)
+    train_embeddings, train_labels = _get_all_embeddings(train_set, model)
+    test_embeddings, test_labels = _get_all_embeddings(test_set, model)
     train_labels = train_labels.squeeze(1)
     test_labels = test_labels.squeeze(1)
 
