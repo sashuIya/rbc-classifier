@@ -355,7 +355,6 @@ def handle_run_sam_button_click(
 
 
 @callback(
-    Output(id("run-for-all-button"), "style"),
     Input(id("run-for-all-button"), "n_clicks"),
     State(id("sam-checkpoint-filepath"), "value"),
     State(id("crops-per-side"), "value"),
@@ -390,7 +389,7 @@ def handle_run_for_all_button(
     print("running for", image_filepaths)
 
     if n_clicks == 1:
-        return {}
+        return
 
     timestamp = datetime.now()
     filename_timestamp = timestamp.strftime("%Y-%m-%d_%H-%M-%S")
@@ -412,5 +411,3 @@ def handle_run_for_all_button(
         image_data_writer = ImageDataWriter(image_filepath)
         image_data_writer.write_masks(masks, filename_timestamp)
         image_data_writer.write_masks_features(features_df, filename_timestamp)
-
-    return {}

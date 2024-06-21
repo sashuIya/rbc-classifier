@@ -683,7 +683,6 @@ def handle_canvas_click(
 
 
 @callback(
-    Output(id("save-labels-button"), "style"),
     Input(id("save-labels-button"), "n_clicks"),
     State(id("labeled-masks"), "data"),
     State(id("image-filepath"), "value"),
@@ -744,8 +743,6 @@ def handle_save_labels_button_click(
     ordered_label_counts.to_csv(
         result_filepath_base + "_label_counts.tsv", sep="\t", index=False
     )
-
-    return {}
 
 
 @callback(

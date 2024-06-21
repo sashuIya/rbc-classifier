@@ -127,7 +127,6 @@ def handle_measurements_update(image_filepath, height, micrometers, scale_x0, sc
 
 
 @callback(
-    Output(id("save-metadata"), "style"),
     Input(id("save-metadata"), "n_clicks"),
     State(id("height"), "value"),
     State(id("micrometers"), "value"),
@@ -164,8 +163,6 @@ def handle_save_metadata_click(
     df = pd.concat([df, data], ignore_index=True)
 
     write_images_metadata(df)
-
-    return {}
 
 
 @callback(
