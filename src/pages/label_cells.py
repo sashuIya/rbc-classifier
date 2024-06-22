@@ -850,15 +850,14 @@ def handle_masks_filepath_selection(selected_masks_option, image_filepath):
         raise PreventUpdate
 
     image_data_reader = ImageDataReader(image_filepath)
-    print(selected_masks_option)
+    print("selected_masks_option:", selected_masks_option)
     masks = image_data_reader.read_masks(selected_masks_option)
     labeled_masks_df = image_data_reader.read_masks_features(selected_masks_option)
     print("read labeled_masks, shape", labeled_masks_df.shape)
-    print(labeled_masks_df[[MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN]].head())
-
     labeled_masks_df = labeled_masks_df[
-        [MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN]
+        [MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN, CONFIDENCE_COLUMN]
     ]
+    print(labeled_masks_df.head())
 
     image = read_image(image_filepath)
     assert len(masks) == labeled_masks_df.shape[0]
