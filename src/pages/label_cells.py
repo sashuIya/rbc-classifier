@@ -591,7 +591,7 @@ def update_labeled_masks(modified_labels, labeled_masks: dict):
             [Y_COLUMN, LABELING_MODE_COLUMN],
         ] = (new_label, new_labeling_mode)
 
-    return labeled_masks.to_dict()
+    return labeled_masks.to_dict("records")
 
 
 @callback(
@@ -881,7 +881,7 @@ def handle_masks_filepath_selection(selected_masks_option, image_filepath):
         ALL_MASKS_RADIO_BUTTONS_PREFIX, sorted_crop_infos
     )
 
-    return labeled_masks_df.to_dict(), all_mask_previews
+    return labeled_masks_df.to_dict("records"), all_mask_previews
 
 
 @callback(
@@ -994,7 +994,7 @@ def handle_run_classifier_button(
         labeled_masks[CONFIDENCE_COLUMN] = 0.0
     labeled_masks.loc[unlabled_rows, CONFIDENCE_COLUMN] = confidence_scores
 
-    return labeled_masks.to_dict()
+    return labeled_masks.to_dict("records")
 
 
 @callback(

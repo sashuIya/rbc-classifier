@@ -286,10 +286,10 @@ def compute_confidence_score(distances, neighbor_labels, mode_result):
     normalized_distances = distances / np.sum(distances)
 
     # Find indices of neighbors with the majority label
-    majority_label_indices = np.where(neighbor_labels == mode_result.mode)[0]
+    majority_label_indices = np.where(neighbor_labels == mode_result.mode)
 
     # Extract corresponding normalized distances
-    relevant_normalized_distances = normalized_distances[majority_label_indices]
+    relevant_normalized_distances = normalized_distances[0][majority_label_indices]
 
     # Compute the average of these distances to get a single confidence score
     average_confidence_score = 1 - np.mean(relevant_normalized_distances)
