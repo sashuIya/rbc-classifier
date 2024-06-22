@@ -181,6 +181,13 @@ layout = dbc.Container(
             className="me-1",
             n_clicks=0,
         ),
+        dbc.Button(
+            "Reset labels",
+            color="danger",
+            id=id("reset-labels-button"),
+            className="me-1",
+            n_clicks=0,
+        ),
         html.Div(style={"padding": "10px"}),
         dbc.Row(
             [
@@ -709,6 +716,24 @@ def handle_canvas_click(
 
 
 @callback(
+    Output(id("labeled-masks"), "data", allow_duplicate=True),
+    Input(id("reset-labels-button"), "n_clicks"),
+    State(id("labeled-masks"), "data"),
+    prevent_initial_call=True,
+)
+@timeit
+def handle_reset_labels_button_click(n_clicks, labeled_masks_df):
+    if n_clicks == 0 or not labeled_masks_df:
+        raise PreventUpdate
+
+    labeled_masks_df = pd.DataFrame(labeled_masks_df)
+    labeled_masks_df[Y_COLUMN] = LABEL_UNLABELED
+    labeled_masks_df[CONFIDENCE_COLUMN] = 0.0
+
+    return labeled_masks_df.to_dict("records")
+
+
+@callback(
     Input(id("save-labels-button"), "n_clicks"),
     State(id("labeled-masks"), "data"),
     State(id("image-filepath"), "value"),
@@ -848,8 +873,12 @@ def handle_masks_filepath_selection(selected_masks_option, image_filepath):
             )
         )
 
+    sorted_crop_infos = sorted(
+        crop_infos, key=lambda crop_info: crop_info.confidence_score
+    )
+
     all_mask_previews = generate_labeled_masks_previews(
-        ALL_MASKS_RADIO_BUTTONS_PREFIX, crop_infos
+        ALL_MASKS_RADIO_BUTTONS_PREFIX, sorted_crop_infos
     )
 
     return labeled_masks_df.to_dict(), all_mask_previews
