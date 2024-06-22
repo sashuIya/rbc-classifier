@@ -265,7 +265,36 @@ def train_pipeline(dir: str = None):
 @dataclass
 class KnnClassifyOptions:
     k: int = 10
-    min_votes: int = 9
+    min_votes: int = 3
+
+
+def compute_confidence_score(distances, neighbor_labels, mode_result):
+    """
+    Compute the confidence score for the classification decision based on the distances
+    and labels of the nearest neighbors.
+
+    Parameters:
+    - distances: Array-like object containing the distances of the nearest neighbors.
+    - neighbor_labels: Array-like object containing the labels of the nearest neighbors.
+    - mode_result: Result from scipy.stats.mode, containing the mode (most common label)
+                   and its count among the nearest neighbors.
+
+    Returns:
+    - confidence_score: Float representing the confidence score for the classification decision.
+    """
+    # Normalize distances to sum to 1 for easier interpretation
+    normalized_distances = distances / np.sum(distances)
+
+    # Find indices of neighbors with the majority label
+    majority_label_indices = np.where(neighbor_labels == mode_result.mode)[0]
+
+    # Extract corresponding normalized distances
+    relevant_normalized_distances = normalized_distances[majority_label_indices]
+
+    # Compute the average of these distances to get a single confidence score
+    average_confidence_score = 1 - np.mean(relevant_normalized_distances)
+
+    return average_confidence_score
 
 
 @timeit
@@ -310,6 +339,7 @@ def classify(
     # This is for actual names ('echinocyte', 'intermediate mainly biconcave RBC',
     # etc).
     decoded_predicted_labels = []
+    confidence_scores = []
 
     for i in range(embeddings_to_classify.shape[0]):
         query_embedding = embeddings_to_classify[i : i + 1]
@@ -322,10 +352,15 @@ def classify(
         # Determine the majority label among the neighbors.
         neighbor_labels = faiss_labels[indices[0]]
         mode_result = mode(neighbor_labels)
+
+        confidence_score = compute_confidence_score(
+            distances, neighbor_labels, mode_result
+        )
         classified_label = LABEL_UNLABELED
         if mode_result.count >= options.min_votes:
             classified_label = label_encoder.inverse_transform([mode_result.mode])[0]
         decoded_predicted_labels.append(classified_label)
+        confidence_scores.append(confidence_score)
 
     # Print the predicted classes and their counts.
     class_names, counts = np.unique(decoded_predicted_labels, return_counts=True)
@@ -334,7 +369,7 @@ def classify(
     for class_name, count in zip(class_names, counts):
         print(f"{class_name:<50} {count:<8}")
 
-    return decoded_predicted_labels
+    return decoded_predicted_labels, confidence_scores
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ Y_COLUMN = "y"
 X_COLUMN_PREFIX = "x_"
 LABELING_MODE_COLUMN = "labeling_mode"
 MASK_ID_COLUMN = "mask_id"
+CONFIDENCE_COLUMN = "confidence"
 
 ## Labels
 LABEL_UNLABELED = "unlabeled"
