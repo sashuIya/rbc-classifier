@@ -9,6 +9,16 @@
 ![GitHub License](https://img.shields.io/github/license/sashuIya/rbc-classifier)
 ![GitHub Commit Activity](https://img.shields.io/github/commit-activity/y/sashuIya/rbc-classifier)
 
+# Blood Cell Image Analysis Tool
+
+## Objective
+
+The primary goal of this project is to develop a comprehensive tool for the analysis and classification of blood cells in microscopy images. By leveraging advanced image processing techniques and machine learning models, we aim to automate the identification and labeling of various blood cell types, thereby enhancing the efficiency and accuracy of hematological analyses. Our tool is designed to support researchers and clinicians by providing detailed insights into blood samples, facilitating early detection of abnormalities and aiding in diagnostic decision-making processes.
+
+### Secondary Objective
+
+Beyond its application in hematology, this tool is designed with flexibility in mind, allowing users to define their own objects, labels, and databases for a wide range of image analysis tasks. Whether it's identifying components in automotive manufacturing, sorting biological specimens, or any other application requiring precise object classification, our tool provides a robust framework for custom training and deployment. This adaptability makes it a valuable resource for professionals across various fields seeking to leverage machine learning for image-based classification challenges.
+
 ## Workflow
 
 - The tool begins by extracting metadata from the bottom of the image using a measurement function, which also stores the image scaling factor.
