@@ -854,6 +854,8 @@ def handle_masks_filepath_selection(selected_masks_option, image_filepath):
     masks = image_data_reader.read_masks(selected_masks_option)
     labeled_masks_df = image_data_reader.read_masks_features(selected_masks_option)
     print("read labeled_masks, shape", labeled_masks_df.shape)
+    if CONFIDENCE_COLUMN not in labeled_masks_df.columns:
+        labeled_masks_df[CONFIDENCE_COLUMN] = 0.0
     labeled_masks_df = labeled_masks_df[
         [MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN, CONFIDENCE_COLUMN]
     ]

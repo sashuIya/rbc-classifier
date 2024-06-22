@@ -11,10 +11,12 @@ from torchvision.models import ResNet50_Weights, resnet50
 from tqdm import tqdm
 
 from src.common.consts import (
+    CONFIDENCE_COLUMN,
     LABEL_UNLABELED,
     LABELING_AUTO,
     LABELING_MODE_COLUMN,
     MASK_ID_COLUMN,
+    Y_COLUMN,
 )
 from src.common.filepath_util import read_images_metadata
 
@@ -177,9 +179,11 @@ def construct_features_dataframe(
         MASK_ID_COLUMN,
         "mask_area_px",
         LABELING_MODE_COLUMN,
-        "y",
+        Y_COLUMN,
+        CONFIDENCE_COLUMN,
     ]
     metadata = []
+    default_confidence = 0.0
     for mask in masks:
         metadata.append(
             [
@@ -188,6 +192,7 @@ def construct_features_dataframe(
                 mask["area"],
                 LABELING_AUTO,
                 LABEL_UNLABELED,
+                default_confidence,
             ]
         )
         assert len(metadata[-1]) == len(metadata_df_columns)
