@@ -27,7 +27,6 @@ from PIL import Image
 from src.common.consts import (
     CONFIDENCE_COLUMN,
     # Labels (options of Y_COLUMN)
-    LABEL_AMBIGIOUS,
     LABEL_UNLABELED,
     LABEL_WRONG,
     LABELING_APPROVED,
@@ -44,10 +43,10 @@ from src.common.filepath_util import (
     EmbedderMetadata,
     ImageDataReader,
     ImageDataWriter,
+    LabelsMetadata,
     get_classifier_model_filepaths,
     read_image,
     read_images_metadata,
-    read_labels_metadata,
     write_images_metadata,
 )
 from src.models.train_classifier import (
@@ -127,18 +126,12 @@ def construct_embedder_metadata_container(embedder_filepath):
     return formatted_dict
 
 
-LABELS = {
-    "red blood cell": {"color": np.array([255, 0, 0])},
-    "intermediate mainly biconcave RBC": {"color": np.array([255, 191, 0])},
-    "intermediate mainly polyhedral RBC": {"color": np.array([127, 255, 0])},
-    "polyhedrocyte": {"color": np.array([0, 255, 63])},
-    "spheroid cell": {"color": np.array([0, 255, 102])},
-    "echinocyte": {"color": np.array([0, 101, 255])},
-    LABEL_AMBIGIOUS: {"color": np.array([0, 153, 255])},
-    LABEL_WRONG: {"color": np.array([203, 255, 0])},
-    LABEL_UNLABELED: {"color": np.array([204, 0, 255])},
-}
-DEFAULT_LABEL = "red blood cell" if "red blood cell" in LABELS else LABEL_WRONG
+LABELS_METADATA = LabelsMetadata()
+DEFAULT_LABEL = (
+    "red blood cell"
+    if "red blood cell" in LABELS_METADATA.get_list_of_labels()
+    else LABEL_WRONG
+)
 
 id = id_factory("label-cells")
 register_page(__name__, order=2)
@@ -210,7 +203,7 @@ layout = dbc.Container(
                     [
                         dbc.Label("Selected label:"),
                         dbc.RadioItems(
-                            list(LABELS.keys()),
+                            LABELS_METADATA.get_list_of_labels(),
                             DEFAULT_LABEL,
                             id=id("active-label"),
                         ),
@@ -314,7 +307,7 @@ def create_color_by_mask_id(labels_df):
         mask_id, label = row[MASK_ID_COLUMN], row[Y_COLUMN]
         if label in [LABEL_UNLABELED, LABEL_WRONG]:
             continue
-        color_by_mask_id[mask_id] = LABELS[label]["color"]
+        color_by_mask_id[mask_id] = LABELS_METADATA.get_color_by_label(label)
 
     return color_by_mask_id
 
@@ -366,14 +359,14 @@ def generate_labeled_mask_preview_info(
         mask,
         xy_threshold=20,
         with_highlighting=True,
-        color_mask=LABELS[label]["color"],
+        color_mask=LABELS_METADATA.get_color_by_label(label),
     )
     original_crop = get_masked_crop(
         image,
         mask,
         xy_threshold=20,
         with_highlighting=False,
-        color_mask=LABELS[label]["color"],
+        color_mask=LABELS_METADATA.get_color_by_label(label),
     )
     return LabeledMaskPreviewInfo(
         highlighted_crop, original_crop, label, mask, confidence_score
@@ -447,7 +440,7 @@ def generate_labeled_masks_previews(
     radio_buttons_prefix: str,
     labeled_mask_preview_infos: list[LabeledMaskPreviewInfo],
 ) -> list[dbc.Form]:
-    labels = list(LABELS.keys())
+    labels = list(LABELS_METADATA.get_list_of_labels())
 
     image_radio_items = []
     for info in labeled_mask_preview_infos:
@@ -782,15 +775,20 @@ def handle_save_labels_button_click(
     pillow_image = Image.fromarray(image.astype(np.uint8))
     pillow_image.save(image_result_filepath, compression="tiff_lzw")
 
-    labels_metadata = read_labels_metadata()
     # Group by labels and sort results by the order that is listed in labels_metadata.csv
     common_labels = set(labeled_masks_df[Y_COLUMN]).intersection(
-        labels_metadata["label"]
+        LABELS_METADATA.get_list_of_labels()
     )
     filtered_df_data = labeled_masks_df[labeled_masks_df[Y_COLUMN].isin(common_labels)]
-    filtered_df_order = labels_metadata[labels_metadata["label"].isin(common_labels)]
+
     label_counts = filtered_df_data[Y_COLUMN].value_counts()
-    ordered_label_counts = label_counts.loc[filtered_df_order["label"]].reset_index()
+
+    # Order the counts according to the list of labels in label_metadata.
+    ordered_label_counts = (
+        label_counts.reindex(LABELS_METADATA.get_list_of_labels())
+        .dropna()
+        .reset_index()
+    )
     ordered_label_counts.columns = ["Label", "Count"]
 
     ordered_label_counts.to_csv(
@@ -810,6 +808,11 @@ def perform_stats_change(labeled_masks_dict):
     labeled_masks_df = pd.DataFrame(labeled_masks_dict)
     label_counts = labeled_masks_df[Y_COLUMN].value_counts().reset_index()
     label_counts.columns = ["Label", "Count"]
+
+    # Sort label_counts according to the order in LABELS_METADATA.get_list_of_labels()
+    ordered_labels = LABELS_METADATA.get_list_of_labels()
+    label_counts.set_index("Label", inplace=True)
+    label_counts = label_counts.reindex(ordered_labels).dropna().reset_index()
 
     return label_counts.to_dict("records")
 

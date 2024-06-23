@@ -180,7 +180,7 @@ class ImageDataWriter:
 
 
 def read_images_metadata() -> pd.DataFrame:
-    if not os.path.exists(LABELS_METADATA_FILEPATH):
+    if not os.path.exists(IMAGES_METADATA_FILEPATH):
         return pd.DataFrame(columns=["filepath"])
 
     return pd.read_csv(IMAGES_METADATA_FILEPATH, index_col=None)
@@ -263,6 +263,45 @@ class EmbedderMetadata:
         )
 
         metadata_df.to_csv(EMBEDDERS_METADATA_FILEPATH, index=False, header=True)
+
+
+class LabelsMetadata:
+    def __init__(self):
+        self.filepath = LABELS_METADATA_FILEPATH
+        self.labels = []
+        self.colors = {}
+        self._read_csv()
+
+    def _read_csv(self):
+        df = pd.read_csv(self.filepath)
+        for _, row in df.iterrows():
+            label = row["label"]
+            color = np.array([row["color_r"], row["color_g"], row["color_b"]])
+            self.labels.append(label)
+            self.colors[label] = color
+
+        required_labels = ["wrong", "ambiguous", "unlabeled"]
+        for required_label in required_labels:
+            if required_label not in self.labels:
+                raise ValueError(
+                    f"'{required_label}' not found in labels listed in csv"
+                )
+
+    def write_csv(self):
+        data = {
+            "label": self.labels,
+            "color_r": [self.colors[label][0] for label in self.labels],
+            "color_g": [self.colors[label][1] for label in self.labels],
+            "color_b": [self.colors[label][2] for label in self.labels],
+        }
+        df = pd.DataFrame(data)
+        df.to_csv(self.filepath, index=False)
+
+    def get_list_of_labels(self):
+        return self.labels
+
+    def get_color_by_label(self, label):
+        return self.colors.get(label, None)
 
 
 def write_embedder_and_faiss(
@@ -349,11 +388,6 @@ def read_labeled_and_reviewed_features_for_all_images(
         & (df[LABELING_MODE_COLUMN].isin([LABELING_MANUAL, LABELING_APPROVED]))
     ]
     print("read {} approved features (manual and semi-auto)".format(df.shape[0]))
-    return df
-
-
-def read_labels_metadata() -> pd.DataFrame:
-    df = pd.read_csv(LABELS_METADATA_FILEPATH, index_col=None)
     return df
 
 
