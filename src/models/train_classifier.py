@@ -168,10 +168,12 @@ def train_embedder(
         loss = loss_func(embeddings, labels, indices_tuple)
         loss.backward()
 
+        global_step = batch_idx + epoch * len(train_loader)
         tensorboard_writer.add_scalar(
-            "Loss/Train",
-            loss.item(),
-            global_step=batch_idx + epoch * len(train_loader),
+            "Loss/Train", loss.item(), global_step=global_step
+        )
+        tensorboard_writer.add_scalar(
+            "Mined triplets", mining_func.num_triplets, global_step=global_step
         )
 
         optimizer.step()
