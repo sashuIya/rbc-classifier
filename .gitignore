@@ -2,6 +2,8 @@ model/
 *.tif
 dataset/
 .backup/
+train_embedding_visualization.png
+val_embedding_visualization.png
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

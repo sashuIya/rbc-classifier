@@ -1,6 +1,7 @@
 import json
 import os
 import pickle
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PurePath
 from typing import Dict, List
@@ -26,6 +27,21 @@ from src.common.consts import (
     SAM_LATEST_USED_CONFIG_FILEPATH,
     Y_COLUMN,
 )
+
+
+@dataclass
+class EmbedderModelInfo:
+    timestamp: datetime = field(default_factory=datetime.now)
+    name: str = ""
+    filename: str = ""
+    filepath: str = ""
+
+    def __post_init__(self):
+        self.name = "classifier_model_{}".format(
+            self.timestamp.strftime("%Y-%m-%d_%H-%M-%S")
+        )
+        self.filename = f"{self.name}.pth"
+        self.filepath = os.path.join(CLASSIFIER_CHECKPOINT_DIR, self.filename)
 
 
 def get_rel_filepaths_from_subfolders(
@@ -251,6 +267,7 @@ class EmbedderMetadata:
 
 def write_embedder_and_faiss(
     embedder_model,
+    embedder_model_info,
     faiss_index,
     labels,
     label_encoder,
@@ -258,20 +275,20 @@ def write_embedder_and_faiss(
     validation_accuracy,
     epochs,
 ):
-    timestamp = datetime.now()
-    filename_timestamp = timestamp.strftime("%Y-%m-%d_%H-%M-%S")
-    filename = f"classifier_model_{filename_timestamp}.pth"
-    filepath = os.path.join(CLASSIFIER_CHECKPOINT_DIR, filename)
     model_state = {
         "embedder": embedder_model,
         "faiss_index": faiss.serialize_index(faiss_index),
         "labels": labels,
         "label_encoder": label_encoder,
     }
-    torch.save(model_state, filepath)
+    torch.save(model_state, embedder_model_info.filepath)
 
     EmbedderMetadata().save_embedder_metadata(
-        filename, timestamp, labeled_data_df, validation_accuracy, epochs
+        embedder_model_info.filename,
+        embedder_model_info.timestamp,
+        labeled_data_df,
+        validation_accuracy,
+        epochs,
     )
 
 

@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 
 import matplotlib
@@ -18,13 +19,16 @@ from sklearn import preprocessing
 from sklearn.manifold import TSNE
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.tensorboard import SummaryWriter
 
 from src.common.consts import (
+    CLASSIFIER_TENSORBOARD_DIR,
     LABEL_UNLABELED,
     X_COLUMN_PREFIX,
     Y_COLUMN,
 )
 from src.common.filepath_util import (
+    EmbedderModelInfo,
     read_embedder_and_faiss,
     read_labeled_and_reviewed_features_for_all_images,
     write_embedder_and_faiss,
@@ -56,7 +60,14 @@ class Embedder(nn.Module):
 
 
 def train_embedder(
-    model, loss_func, mining_func, device, train_loader, optimizer, epoch
+    model,
+    loss_func,
+    mining_func,
+    device,
+    train_loader,
+    optimizer,
+    epoch,
+    tensorboard_writer,
 ):
     model.train()
     for batch_idx, (data, labels) in enumerate(train_loader):
@@ -66,13 +77,43 @@ def train_embedder(
         indices_tuple = mining_func(embeddings, labels)
         loss = loss_func(embeddings, labels, indices_tuple)
         loss.backward()
+
+        tensorboard_writer.add_scalar(
+            "Loss/Train",
+            loss.item(),
+            global_step=batch_idx + epoch * len(train_loader),
+        )
+
         optimizer.step()
+
     if epoch % 20 == 0:
         print(
             "Epoch {}  Loss = {}, Number of mined triplets = {}".format(
                 epoch, loss, mining_func.num_triplets
             )
         )
+
+
+def validate_embedder(
+    model, data_loader, loss_func, device, tensorboard_writer, global_step
+):
+    model.eval()  # Set the model to evaluation mode
+    total_loss = 0
+    with torch.no_grad():  # No need to track gradients during validation
+        for data, targets in data_loader:
+            data, targets = data.to(device), targets.to(device)
+            outputs = model(data)
+            loss = loss_func(outputs, targets)
+            total_loss += loss.item()
+
+    avg_validation_loss = total_loss / len(data_loader.dataset)
+    if (global_step + 1) % 20 == 0:
+        print(f"Loss/Validation: {avg_validation_loss:.4f}")
+
+    # Log the validation loss to TensorBoard
+    tensorboard_writer.add_scalar(
+        "Loss/Validation", avg_validation_loss, global_step=global_step
+    )
 
 
 def _get_all_embeddings(dataset, model):
@@ -161,6 +202,10 @@ def train_pipeline(dir: str = None):
     if DEVICE == "cuda":
         torch.cuda.empty_cache()
 
+    embedder_model_info = EmbedderModelInfo()
+    tensorboard_writer = SummaryWriter(
+        log_dir=os.path.join(CLASSIFIER_TENSORBOARD_DIR, embedder_model_info.name)
+    )
     labeled_data_df = read_labeled_and_reviewed_features_for_all_images(
         dir, check_data=True
     )
@@ -216,11 +261,31 @@ def train_pipeline(dir: str = None):
     accuracy_calculator = AccuracyCalculator(include=("precision_at_1",), k=1)
 
     num_epochs = 300
+    skip_evaluation = 5
 
     for epoch in range(1, num_epochs + 1):
         train_embedder(
-            embedder, loss_func, mining_func, DEVICE, train_loader, optimizer, epoch
+            embedder,
+            loss_func,
+            mining_func,
+            DEVICE,
+            train_loader,
+            optimizer,
+            epoch,
+            tensorboard_writer,
         )
+
+        if (epoch + 1) % skip_evaluation == 0:
+            global_step = epoch * len(train_loader)
+            print("global_step", global_step)
+            validate_embedder(
+                model=embedder,
+                data_loader=val_loader,
+                loss_func=loss_func,
+                device=DEVICE,
+                tensorboard_writer=tensorboard_writer,
+                global_step=global_step,
+            )
 
     validation_accuracy = test_embedder(
         train_dataset, val_dataset, embedder, accuracy_calculator
@@ -253,6 +318,7 @@ def train_pipeline(dir: str = None):
 
     write_embedder_and_faiss(
         embedder,
+        embedder_model_info,
         index,
         all_embedding_labels,
         label_encoder,

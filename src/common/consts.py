@@ -30,6 +30,7 @@ LABELS_METADATA_FILEPATH = os.path.join(DATA_PATH, "labels_metadata.csv")
 EMBEDDERS_METADATA_FILEPATH = os.path.normpath("model/embedders_metadata.csv")
 
 CLASSIFIER_CHECKPOINT_DIR = os.path.normpath("model/cells_classifier")
+CLASSIFIER_TENSORBOARD_DIR = os.path.join(CLASSIFIER_CHECKPOINT_DIR, "tensorboard")
 
 SAM_CHECKPOINTS_FOLDER = os.path.normpath("model/sam/")
 SAM_LATEST_USED_CONFIG_FILEPATH = os.path.join(
