@@ -8,6 +8,7 @@ MASK_ID_COLUMN = "mask_id"
 CONFIDENCE_COLUMN = "confidence"
 
 ## Labels
+LABEL_AMBIGIOUS = "ambigious"
 LABEL_UNLABELED = "unlabeled"
 LABEL_WRONG = "wrong"
 

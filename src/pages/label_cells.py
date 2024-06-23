@@ -27,6 +27,7 @@ from PIL import Image
 from src.common.consts import (
     CONFIDENCE_COLUMN,
     # Labels (options of Y_COLUMN)
+    LABEL_AMBIGIOUS,
     LABEL_UNLABELED,
     LABEL_WRONG,
     LABELING_APPROVED,
@@ -133,6 +134,7 @@ LABELS = {
     "polyhedrocyte": {"color": np.array([0, 255, 63])},
     "spheroid cell": {"color": np.array([0, 255, 102])},
     "echinocyte": {"color": np.array([0, 101, 255])},
+    LABEL_AMBIGIOUS: {"color": np.array([0, 153, 255])},
     LABEL_WRONG: {"color": np.array([203, 255, 0])},
     LABEL_UNLABELED: {"color": np.array([204, 0, 255])},
 }
