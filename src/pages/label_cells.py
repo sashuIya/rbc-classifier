@@ -984,16 +984,16 @@ def handle_run_classifier_button(
     image_data_reader = ImageDataReader(image_filepath)
     labeled_masks = image_data_reader.read_masks_features(selected_masks_option)
     unlabled_rows = labeled_masks[Y_COLUMN] == LABEL_UNLABELED
-    predictions, confidence_scores = classify(
-        labeled_masks[unlabled_rows], classifier_model_filepath
-    )
+    classify_results = classify(labeled_masks[unlabled_rows], classifier_model_filepath)
 
-    labeled_masks.loc[unlabled_rows, Y_COLUMN] = predictions
+    labeled_masks.loc[unlabled_rows, Y_COLUMN] = classify_results.decoded_labels
 
     # Ensure the DataFrame has a column for confidence scores
     if CONFIDENCE_COLUMN not in labeled_masks.columns:
         labeled_masks[CONFIDENCE_COLUMN] = 0.0
-    labeled_masks.loc[unlabled_rows, CONFIDENCE_COLUMN] = confidence_scores
+    labeled_masks.loc[unlabled_rows, CONFIDENCE_COLUMN] = (
+        classify_results.confidence_scores
+    )
 
     return labeled_masks.to_dict("records")
 

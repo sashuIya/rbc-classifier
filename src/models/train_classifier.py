@@ -1,14 +1,16 @@
+import io
 import os
 from dataclasses import dataclass
 
 import matplotlib
-
-from src.utils.timing import timeit
+from PIL import Image
 
 matplotlib.use("Agg")  # 'Agg' backend is suitable for saving figures to files
 import faiss
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+import seaborn as sns
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -17,6 +19,7 @@ from pytorch_metric_learning.utils.accuracy_calculator import AccuracyCalculator
 from scipy.stats import mode
 from sklearn import preprocessing
 from sklearn.manifold import TSNE
+from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, TensorDataset
 from torch.utils.tensorboard import SummaryWriter
@@ -33,6 +36,7 @@ from src.common.filepath_util import (
     read_labeled_and_reviewed_features_for_all_images,
     write_embedder_and_faiss,
 )
+from src.utils.timing import timeit
 
 DEVICE = "cuda"
 BATCH_SIZE = 512
@@ -57,6 +61,90 @@ class Embedder(nn.Module):
     def forward(self, x):
         x = self.fc(x)
         return x
+
+
+@dataclass
+class KnnClassifyOptions:
+    k: int = 10
+    min_votes: int = 3
+
+
+@dataclass
+class ClassifyResults:
+    decoded_labels: list[str]  # these are actual names (e.g., 'echinocyte')
+    confidence_scores: list[float]
+
+
+def _classify_embeddings(
+    embeddings, faiss_index, faiss_labels, label_encoder, options: KnnClassifyOptions
+) -> ClassifyResults:
+    embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
+
+    # This is for actual names ('echinocyte', 'intermediate mainly biconcave RBC',
+    # etc).
+    decoded_predicted_labels = []
+    confidence_scores = []
+
+    for i in range(embeddings.shape[0]):
+        query_embedding = embeddings[i : i + 1]
+
+        # Perform a similarity search to find nearest neighbors.
+        distances, indices = faiss_index.search(
+            query_embedding.astype(np.float32), options.k
+        )
+
+        # Determine the majority label among the neighbors.
+        neighbor_labels = faiss_labels[indices[0]]
+        mode_result = mode(neighbor_labels)
+
+        confidence_score = compute_confidence_score(
+            distances, neighbor_labels, mode_result
+        )
+        classified_label = LABEL_UNLABELED
+        if mode_result.count >= options.min_votes:
+            classified_label = label_encoder.inverse_transform([mode_result.mode])[0]
+        decoded_predicted_labels.append(classified_label)
+        confidence_scores.append(confidence_score)
+
+    return ClassifyResults(
+        decoded_labels=decoded_predicted_labels, confidence_scores=confidence_scores
+    )
+
+
+def _embed(embedder: nn.Module, data_loader: DataLoader, read_labels: bool):
+    # Set the model to evaluation mode
+    embedder.eval()
+
+    # Create empty lists to store embeddings and corresponding labels
+    embeddings_list = []
+    labels_list = []
+
+    with torch.no_grad():
+        for batch in data_loader:
+            features_batch = batch[0]
+            embeddings = embedder(features_batch.to(DEVICE))
+            embeddings_list.append(embeddings.cpu().numpy())
+            if read_labels:
+                labels_batch = batch[1]
+                labels_list.append(labels_batch.numpy())
+
+    # Convert the lists to numpy arrays
+    embeddings_array = np.concatenate(embeddings_list)
+
+    if read_labels:
+        labels_array = np.concatenate(labels_list)
+        return embeddings_array, labels_array
+
+    return embeddings_array, None
+
+
+def _create_faiss_index(data_loader, embedder):
+    embeddings, labels = _embed(embedder, data_loader, read_labels=True)
+    embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
+    index = faiss.IndexFlatIP(embeddings.shape[1])
+    index.add(embeddings)
+
+    return index, labels
 
 
 def train_embedder(
@@ -140,28 +228,6 @@ def test_embedder(train_set, test_set, model, accuracy_calculator) -> float:
     return accuracy
 
 
-def embed(embedder, data_loader):
-    # Set the model to evaluation mode
-    embedder.eval()
-
-    # Create empty lists to store embeddings and corresponding labels
-    embeddings_list = []
-    labels_list = []
-
-    with torch.no_grad():
-        for features_batch, labels_batch in data_loader:
-            # features_batch = features_batch[0].to(DEVICE)
-            embeddings = embedder(features_batch.to(DEVICE))
-            embeddings_list.append(embeddings.cpu().numpy())
-            labels_list.append(labels_batch.numpy())
-
-    # Convert the lists to numpy arrays
-    embeddings_array = np.concatenate(embeddings_list)
-    labels_array = np.concatenate(labels_list)
-
-    return embeddings_array, labels_array
-
-
 def get_labels_from_data_loader(data_loader):
     # Create empty lists to store embeddings and corresponding labels
     labels_list = []
@@ -180,7 +246,7 @@ def plot_clusters(
     label_encoder: preprocessing.LabelEncoder,
 ):
     """Computes the embeddings for the given data_loader, plots and saves 2d projections."""
-    embeddings, embedding_labels = embed(embedder, data_loader)
+    embeddings, embedding_labels = _embed(embedder, data_loader, read_labels=True)
     tsne = TSNE(n_components=2, random_state=42)
     embeddings_2d = tsne.fit_transform(embeddings)
     # Create a scatter plot with different colors for each label
@@ -196,6 +262,126 @@ def plot_clusters(
 
     # Save the plot as an image
     plt.savefig(output_filename)
+
+
+def convert_confusion_matrix_to_img(cm, labels, title):
+    """Converts a confusion matrix to an image."""
+    # Create a heatmap
+    fig, ax = plt.subplots(figsize=(10, 10))
+    sns.heatmap(
+        cm,
+        annot=True,
+        fmt="d",
+        cmap="Blues",
+        xticklabels=labels,
+        yticklabels=labels,
+        cbar=False,
+        ax=ax,
+    )
+
+    # Set titles and labels
+    ax.set_title(title)
+    ax.set_xlabel("Predicted Label")
+    ax.set_ylabel("True Label")
+
+    # Reduce label font size for better fitting
+    ax.tick_params(axis="both", which="major", labelsize=6)
+
+    # Rotate labels for better visibility
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
+    ax.set_yticklabels(ax.get_yticklabels(), rotation=45)
+
+    # Convert the Matplotlib figure to a NumPy array
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png")
+    buf.seek(0)
+
+    img_pil = Image.open(buf)
+
+    # Remove the alpha channel if present
+    if img_pil.mode != "RGB":
+        img_pil = img_pil.convert("RGB")
+
+    img_array = np.array(img_pil)
+
+    return img_array
+
+
+def create_confusion_matrix(
+    data_loader: DataLoader,
+    embedder: nn.Module,
+    faiss_index,
+    faiss_labels,
+    label_encoder,
+    knn_options: KnnClassifyOptions,
+):
+    embeddings, labels = _embed(embedder, data_loader, read_labels=True)
+    true_decoded_labels = label_encoder.inverse_transform(labels)
+    classify_results = _classify_embeddings(
+        embeddings, faiss_index, faiss_labels, label_encoder, knn_options
+    )
+
+    return confusion_matrix(
+        true_decoded_labels,
+        classify_results.decoded_labels,
+        labels=label_encoder.classes_,
+    )
+
+
+def log_confusion_matrices_to_tensorboard(
+    tensorboard_writer,
+    train_loader,
+    val_loader,
+    embedder,
+    label_encoder,
+    knn_options,
+    step,
+):
+    faiss_index, faiss_labels = _create_faiss_index(train_loader, embedder)
+
+    train_confusion_matrix = create_confusion_matrix(
+        train_loader, embedder, faiss_index, faiss_labels, label_encoder, knn_options
+    )
+    tensorboard_writer.add_image(
+        "Train Confusion Matrix",
+        convert_confusion_matrix_to_img(
+            train_confusion_matrix, label_encoder.classes_, "Train Confusion Matrix"
+        ),
+        step,
+        dataformats="HWC",
+    )
+
+    val_confusion_matrix = create_confusion_matrix(
+        val_loader, embedder, faiss_index, faiss_labels, label_encoder, knn_options
+    )
+    tensorboard_writer.add_image(
+        "Validation Confusion Matrix",
+        convert_confusion_matrix_to_img(
+            val_confusion_matrix, label_encoder.classes_, "Validation Confusion Matrix"
+        ),
+        step,
+        dataformats="HWC",
+    )
+
+
+def plot_train_and_val_clusters(train_loader, val_loader, embedder, label_encoder):
+    # Plot and save train and val embeddings (as 2d projections).
+    plot_clusters(
+        train_loader,
+        "train_embedding_visualization.png",
+        embedder,
+        label_encoder,
+    )
+
+    try:
+        plot_clusters(
+            val_loader,
+            "val_embedding_visualization.png",
+            embedder,
+            label_encoder,
+        )
+    except Exception as e:
+        print(f"An unexpected error occurred when plotting validation clusters: {e}")
 
 
 def train_pipeline(dir: str = None):
@@ -277,7 +463,6 @@ def train_pipeline(dir: str = None):
 
         if (epoch + 1) % skip_evaluation == 0:
             global_step = epoch * len(train_loader)
-            print("global_step", global_step)
             validate_embedder(
                 model=embedder,
                 data_loader=val_loader,
@@ -291,47 +476,28 @@ def train_pipeline(dir: str = None):
         train_dataset, val_dataset, embedder, accuracy_calculator
     )
 
-    # Plot and save train and val embeddings (as 2d projections).
-    plot_clusters(
+    plot_train_and_val_clusters(train_loader, val_dataset, embedder, label_encoder)
+    log_confusion_matrices_to_tensorboard(
+        tensorboard_writer,
         train_loader,
-        "train_embedding_visualization.png",
+        val_loader,
         embedder,
         label_encoder,
+        knn_options=KnnClassifyOptions(),
+        step=num_epochs * len(train_loader),
     )
 
-    try:
-        plot_clusters(
-            val_loader,
-            "val_embedding_visualization.png",
-            embedder,
-            label_encoder,
-        )
-    except Exception as e:
-        print(f"An unexpected error occurred when plotting validation clusters: {e}")
-
-    all_embeddings, all_embedding_labels = embed(embedder, all_loader)
-    all_embeddings = all_embeddings / np.linalg.norm(
-        all_embeddings, axis=1, keepdims=True
-    )
-    index = faiss.IndexFlatIP(all_embeddings.shape[1])
-    index.add(all_embeddings)
-
+    faiss_index, faiss_labels = _create_faiss_index(all_loader, embedder)
     write_embedder_and_faiss(
         embedder,
         embedder_model_info,
-        index,
-        all_embedding_labels,
+        faiss_index,
+        faiss_labels,
         label_encoder,
         labeled_data_df=labeled_data_df,
         validation_accuracy=round(validation_accuracy, 2),
         epochs=num_epochs,
     )
-
-
-@dataclass
-class KnnClassifyOptions:
-    k: int = 10
-    min_votes: int = 3
 
 
 def compute_confidence_score(distances, neighbor_labels, mode_result):
@@ -365,8 +531,10 @@ def compute_confidence_score(distances, neighbor_labels, mode_result):
 
 @timeit
 def classify(
-    df, classifier_model_filepath, options: KnnClassifyOptions = KnnClassifyOptions()
-):
+    df: pd.DataFrame,
+    classifier_model_filepath: str,
+    options: KnnClassifyOptions = KnnClassifyOptions(),
+) -> ClassifyResults:
     if DEVICE == "cuda":
         torch.cuda.empty_cache()
 
@@ -384,58 +552,19 @@ def classify(
     dataset = TensorDataset(torch.from_numpy(x).float())
     data_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False)
 
-    # Set the model to evaluation mode
-    embedder.eval()
-
-    # Create empty lists to store embeddings and corresponding labels
-    embeddings_list = []
-
-    with torch.no_grad():
-        for features_batch in data_loader:
-            features_batch = features_batch[0].to(DEVICE)
-            embeddings = embedder(features_batch)
-            embeddings_list.append(embeddings.cpu().numpy())
-
-    # Convert the lists to numpy arrays
-    embeddings_to_classify = np.concatenate(embeddings_list)
-    embeddings_to_classify = embeddings_to_classify / np.linalg.norm(
-        embeddings_to_classify, axis=1, keepdims=True
+    embeddings, _ = _embed(embedder, data_loader, read_labels=False)
+    classify_results = _classify_embeddings(
+        embeddings, faiss_index, faiss_labels, label_encoder, options
     )
 
-    # This is for actual names ('echinocyte', 'intermediate mainly biconcave RBC',
-    # etc).
-    decoded_predicted_labels = []
-    confidence_scores = []
-
-    for i in range(embeddings_to_classify.shape[0]):
-        query_embedding = embeddings_to_classify[i : i + 1]
-
-        # Perform a similarity search to find nearest neighbors.
-        distances, indices = faiss_index.search(
-            query_embedding.astype(np.float32), options.k
-        )
-
-        # Determine the majority label among the neighbors.
-        neighbor_labels = faiss_labels[indices[0]]
-        mode_result = mode(neighbor_labels)
-
-        confidence_score = compute_confidence_score(
-            distances, neighbor_labels, mode_result
-        )
-        classified_label = LABEL_UNLABELED
-        if mode_result.count >= options.min_votes:
-            classified_label = label_encoder.inverse_transform([mode_result.mode])[0]
-        decoded_predicted_labels.append(classified_label)
-        confidence_scores.append(confidence_score)
-
     # Print the predicted classes and their counts.
-    class_names, counts = np.unique(decoded_predicted_labels, return_counts=True)
+    class_names, counts = np.unique(classify_results.decoded_labels, return_counts=True)
     print("Predicted:")
     print("{:<50} {:<8}".format("Class", "Count"))
     for class_name, count in zip(class_names, counts):
         print(f"{class_name:<50} {count:<8}")
 
-    return decoded_predicted_labels, confidence_scores
+    return classify_results
 
 
 if __name__ == "__main__":
