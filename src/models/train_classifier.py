@@ -343,12 +343,12 @@ def log_confusion_matrices_to_tensorboard(
     train_loader,
     val_loader,
     embedder,
+    faiss_index,
+    faiss_labels,
     label_encoder,
     knn_options,
     step,
 ):
-    faiss_index, faiss_labels = _create_faiss_index(train_loader, embedder)
-
     train_confusion_matrix = create_confusion_matrix(
         train_loader, embedder, faiss_index, faiss_labels, label_encoder, knn_options
     )
@@ -374,7 +374,7 @@ def log_confusion_matrices_to_tensorboard(
     )
 
 
-def plot_train_and_val_clusters(
+def log_train_and_val_clusters(
     tensorboard_writer: SummaryWriter,
     train_loader: DataLoader,
     val_loader: DataLoader,
@@ -436,10 +436,6 @@ def train_pipeline(dir: str = None):
     for element, count in zip(unique_elements, counts):
         print(f"    Class {element}: {count} masks")
 
-    # Create the dataset and data loader
-    all_dataset = TensorDataset(torch.from_numpy(x).float(), torch.from_numpy(y).int())
-    all_loader = DataLoader(all_dataset, batch_size=BATCH_SIZE, shuffle=False)
-
     train_dataset = TensorDataset(
         torch.from_numpy(x_train).float(), torch.from_numpy(y_train).int()
     )
@@ -494,7 +490,9 @@ def train_pipeline(dir: str = None):
         train_dataset, val_dataset, embedder, accuracy_calculator
     )
 
-    plot_train_and_val_clusters(
+    faiss_index, faiss_labels = _create_faiss_index(train_loader, embedder)
+
+    log_train_and_val_clusters(
         tensorboard_writer, train_loader, val_dataset, embedder, label_encoder
     )
     log_confusion_matrices_to_tensorboard(
@@ -502,12 +500,13 @@ def train_pipeline(dir: str = None):
         train_loader,
         val_loader,
         embedder,
+        faiss_index,
+        faiss_labels,
         label_encoder,
         knn_options=KnnClassifyOptions(),
         step=num_epochs * len(train_loader),
     )
 
-    faiss_index, faiss_labels = _create_faiss_index(all_loader, embedder)
     write_embedder_and_faiss(
         embedder,
         embedder_model_info,
