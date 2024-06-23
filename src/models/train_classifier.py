@@ -130,7 +130,9 @@ def _embed(embedder: nn.Module, data_loader: DataLoader, read_labels: bool):
 
     # Convert the lists to numpy arrays
     embeddings_array = np.concatenate(embeddings_list)
-
+    embeddings_array = embeddings_array / np.linalg.norm(
+        embeddings_array, axis=1, keepdims=True
+    )
     if read_labels:
         labels_array = np.concatenate(labels_list)
         return embeddings_array, labels_array
@@ -240,6 +242,7 @@ def get_labels_from_data_loader(data_loader):
 
 
 def plot_clusters(
+    tensorboard_writer: SummaryWriter,
     data_loader: DataLoader,
     output_filename: str,
     embedder: Embedder,
@@ -247,6 +250,11 @@ def plot_clusters(
 ):
     """Computes the embeddings for the given data_loader, plots and saves 2d projections."""
     embeddings, embedding_labels = _embed(embedder, data_loader, read_labels=True)
+    tensorboard_writer.add_embedding(
+        embeddings,
+        metadata=label_encoder.inverse_transform(embedding_labels),
+        tag=output_filename,
+    )
     tsne = TSNE(n_components=2, random_state=42)
     embeddings_2d = tsne.fit_transform(embeddings)
     # Create a scatter plot with different colors for each label
@@ -364,9 +372,16 @@ def log_confusion_matrices_to_tensorboard(
     )
 
 
-def plot_train_and_val_clusters(train_loader, val_loader, embedder, label_encoder):
+def plot_train_and_val_clusters(
+    tensorboard_writer: SummaryWriter,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    embedder: nn.Module,
+    label_encoder: preprocessing.LabelEncoder,
+):
     # Plot and save train and val embeddings (as 2d projections).
     plot_clusters(
+        tensorboard_writer,
         train_loader,
         "train_embedding_visualization.png",
         embedder,
@@ -375,6 +390,7 @@ def plot_train_and_val_clusters(train_loader, val_loader, embedder, label_encode
 
     try:
         plot_clusters(
+            tensorboard_writer,
             val_loader,
             "val_embedding_visualization.png",
             embedder,
@@ -476,7 +492,9 @@ def train_pipeline(dir: str = None):
         train_dataset, val_dataset, embedder, accuracy_calculator
     )
 
-    plot_train_and_val_clusters(train_loader, val_dataset, embedder, label_encoder)
+    plot_train_and_val_clusters(
+        tensorboard_writer, train_loader, val_dataset, embedder, label_encoder
+    )
     log_confusion_matrices_to_tensorboard(
         tensorboard_writer,
         train_loader,
