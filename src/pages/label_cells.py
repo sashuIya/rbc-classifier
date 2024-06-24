@@ -45,7 +45,6 @@ from src.common.filepath_util import (
     ImageDataWriter,
     LabelsMetadata,
     get_classifier_model_filepaths,
-    read_image,
     read_images_metadata,
     write_images_metadata,
 )
@@ -461,11 +460,11 @@ def image_with_masks_figure_as_scatters(
     labels_df: pd.DataFrame,
     selected_masks_option: str,
 ) -> go.Figure:
-    image = read_image(image_filepath, with_alpha=False)
+    image_data_reader = ImageDataReader(image_filepath)
+    image = image_data_reader.image
     fig = px.imshow(image, binary_string=True, binary_backend="jpg")
     fig.update_layout(autosize=False, width=1024, height=1024)
 
-    image_data_reader = ImageDataReader(image_filepath)
     masks = image_data_reader.read_masks(selected_masks_option)
 
     assert len(masks) == labels_df.shape[0], (
@@ -514,8 +513,8 @@ def image_with_masks_figure(
     labels_df: pd.DataFrame,
     selected_masks_option: str,
 ) -> go.Figure:
-    image = read_image(image_filepath, with_alpha=False)
-    image_data_reader = ImageDataReader(image_filepath)
+    image_data_reader = ImageDataReader(image_filepath, with_alpha=False)
+    image = image_data_reader.image
     masks = image_data_reader.read_masks(selected_masks_option)
 
     assert len(masks) == labels_df.shape[0], (
@@ -681,8 +680,8 @@ def handle_canvas_click(
     point = click_data["points"][0]
     x, y = point["x"], point["y"]
 
-    image = read_image(image_filepath)
     image_data_reader = ImageDataReader(image_filepath)
+    image = image_data_reader.image
     masks = image_data_reader.read_masks(selected_masks_option)
 
     assert len(masks) == labeled_masks_df.shape[0]
@@ -758,12 +757,11 @@ def handle_save_labels_button_click(
     image_data_writer = ImageDataWriter(image_filepath)
     image_data_writer.write_masks_features(masks_features, selected_masks_option)
 
-    image = read_image(image_filepath)
     masks = image_data_reader.read_masks(selected_masks_option)
     color_by_mask_id = create_color_by_mask_id(labeled_masks_df)
     image = get_masks_img(
         masks,
-        image,
+        image_data_reader.image,
         masks_color_option=MasksColorOptions.BY_LABEL,
         color_by_mask_id=color_by_mask_id,
     )
@@ -866,7 +864,6 @@ def handle_masks_filepath_selection(selected_masks_option, image_filepath):
     ]
     print(labeled_masks_df.head())
 
-    image = read_image(image_filepath)
     assert len(masks) == labeled_masks_df.shape[0]
 
     crop_infos = []
@@ -875,7 +872,7 @@ def handle_masks_filepath_selection(selected_masks_option, image_filepath):
         confidence_score = get_confidence_score(labeled_masks_df, mask["id"])
         crop_infos.append(
             generate_labeled_mask_preview_info(
-                image, mask, row[Y_COLUMN], confidence_score
+                image_data_reader.image, mask, row[Y_COLUMN], confidence_score
             )
         )
 

@@ -27,6 +27,7 @@ from src.common.consts import (
     SAM_LATEST_USED_CONFIG_FILEPATH,
     Y_COLUMN,
 )
+from src.utils.timing import timeit
 
 
 @dataclass
@@ -90,12 +91,26 @@ def get_classifier_model_filepaths(as_str: bool = False) -> List[Path]:
 
 
 class ImageDataReader:
-    def __init__(self, image_filepath: str):
+    def __init__(self, image_filepath: str, with_alpha: bool = False):
         self.image_filepath = Path(image_filepath)
+        self._image = self._read_image(image_filepath, with_alpha)
         self.masks_folder_path = _get_masks_folder_path(image_filepath)
         self.masks_features_folder_path = _get_masks_features_folder_path(
             image_filepath
         )
+
+    def _read_image(self, image_filepath: str, with_alpha: bool = False) -> np.ndarray:
+        image = cv2.imread(image_filepath)
+        if with_alpha:
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGBA)
+        else:
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        return image
+
+    @property
+    def image(self) -> np.ndarray:
+        return self._image
 
     def masks_options(self) -> List[str]:
         mask_features_filepaths = get_rel_filepaths_from_subfolders(
@@ -109,7 +124,7 @@ class ImageDataReader:
 
         return [f.stem for f in mask_features_filepaths]
 
-    def read_masks(self, masks_option: str) -> Dict:
+    def read_masks(self, masks_option: str, with_crops: bool = False) -> Dict:
         masks_filepath = self.masks_folder_path / (masks_option + ".pkl")
         if not masks_filepath.exists():
             print(f"{masks_filepath} does not exist")
@@ -117,6 +132,22 @@ class ImageDataReader:
 
         with open(masks_filepath, "rb") as f:
             masks = pickle.load(f)
+
+        if with_crops:
+            fade_factor = 0.25
+            for mask in masks:
+                (x, y, w, h) = mask["bbox"]
+                x, y, w, h = int(x), int(y), int(w), int(h)
+                segmentation = mask["segmentation"]
+                image_region = (
+                    self._image[y : y + h + 1, x : x + w + 1, :].copy().astype(float)
+                )
+                inverted_mask = ~segmentation
+                image_region[inverted_mask, 3] *= fade_factor
+                image_region = cv2.cvtColor(
+                    image_region.astype(np.uint8), cv2.COLOR_BGRA2BGR
+                )
+                mask["crop"] = image_region
 
         sorted_masks = sorted(masks, key=(lambda x: x["area"]))
         for i, mask in enumerate(sorted_masks):
@@ -188,16 +219,6 @@ def read_images_metadata() -> pd.DataFrame:
 
 def write_images_metadata(images_metadata: pd.DataFrame) -> None:
     images_metadata.to_csv(IMAGES_METADATA_FILEPATH, index=False, header=True)
-
-
-def read_image(image_filepath, with_alpha=False):
-    image = cv2.imread(image_filepath)
-    if with_alpha:
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGBA)
-    else:
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
-    return image
 
 
 class EmbedderMetadata:
@@ -304,6 +325,7 @@ class LabelsMetadata:
         return self.colors.get(label, None)
 
 
+@timeit
 def write_embedder_and_faiss(
     embedder_model,
     embedder_model_info,
@@ -341,11 +363,14 @@ def read_embedder_and_faiss(filepath):
     return embedder_model, faiss_index, labels, label_encoder
 
 
-def read_features_for_all_images(dir: str = None, check_data=False) -> pd.DataFrame:
+def read_features_for_all_images(
+    dir: str = None, with_crops: bool = False, check_data: bool = False
+) -> pd.DataFrame:
     """Reads labeled and unlabeled data."""
     metadata = read_images_metadata()
     image_filepaths = metadata["filepath"]
     all_labeled_data = []
+    all_crops = []
     print(f"read_features_for_all_images running with glob: {dir}")
     for image_filepath in image_filepaths:
         print("  ", image_filepath)
@@ -354,13 +379,18 @@ def read_features_for_all_images(dir: str = None, check_data=False) -> pd.DataFr
             print(f"skipping {image_filepath}")
             continue
 
-        image_data_reader = ImageDataReader(image_filepath)
+        image_data_reader = ImageDataReader(image_filepath, with_alpha=True)
         for masks_option in image_data_reader.masks_options():
             masks_features = image_data_reader.read_masks_features(masks_option)
 
             if masks_features is None:
                 print("    no masks found")
                 continue
+
+            if with_crops:
+                masks = image_data_reader.read_masks(masks_option, with_crops=True)
+                for mask in masks:
+                    all_crops.append(mask["crop"])
 
             if check_data:
                 masks = image_data_reader.read_masks(masks_option)
@@ -375,20 +405,27 @@ def read_features_for_all_images(dir: str = None, check_data=False) -> pd.DataFr
 
     print("read_features_for_all_images done")
 
-    return pd.concat(all_labeled_data, axis=0)
+    return pd.concat(all_labeled_data, axis=0), all_crops
 
 
 def read_labeled_and_reviewed_features_for_all_images(
-    dir: str = None, check_data=False
+    dir: str = None, with_crops: bool = False, check_data: bool = False
 ) -> pd.DataFrame:
     """Reads labeled data (manually and semi-auto labeled)."""
-    df = read_features_for_all_images(dir=dir, check_data=check_data)
+    df, crops = read_features_for_all_images(
+        dir=dir, with_crops=with_crops, check_data=check_data
+    )
+
     df = df[
         (df[Y_COLUMN] != LABEL_UNLABELED)
         & (df[LABELING_MODE_COLUMN].isin([LABELING_MANUAL, LABELING_APPROVED]))
     ]
-    print("read {} approved features (manual and semi-auto)".format(df.shape[0]))
-    return df
+
+    # Apply the same filtering to the crops list using the indices of the filtered rows
+    filtered_crops = [crop for i, crop in enumerate(crops) if i in df.index]
+
+    print(f"read {len(filtered_crops)} approved features (manual and semi-auto)")
+    return df, filtered_crops
 
 
 def load_lastest_sam_config() -> dict:

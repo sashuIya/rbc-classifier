@@ -15,10 +15,10 @@ from tqdm import tqdm
 
 from src.common.consts import DEFAULT_SAM_CONFIG, SAM_CHECKPOINTS_FOLDER
 from src.common.filepath_util import (
+    ImageDataReader,
     ImageDataWriter,
     get_rel_filepaths_from_subfolders,
     load_lastest_sam_config,
-    read_image,
     read_images_metadata,
     save_sam_config,
 )
@@ -206,7 +206,8 @@ def handle_image_filepath_selection(image_filepath, crops_size, grid_size):
     image_fig = go.FigureWidget()
     image_fig.update_layout(autosize=False, width=1024, height=1024)
 
-    image = read_image(image_filepath)
+    image_data_reader = ImageDataReader(image_filepath)
+    image = image_data_reader.image
     img_trace = px.imshow(image).data[0]
     image_fig.add_trace(img_trace)
 
@@ -254,7 +255,8 @@ def run_sam_for_image(
         ["height", "scale_x0", "scale_x1", "micrometers"],
     ].values[0]
     height = int(height)
-    image = read_image(image_filepath, with_alpha=False)
+    image_data_reader = ImageDataReader(image_filepath, with_alpha=False)
+    image = image_data_reader.image
     width = image_width(image)
     masks = run_sam(
         image[: height // crops_per_side, : width // crops_per_side, :],

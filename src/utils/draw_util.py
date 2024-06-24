@@ -19,6 +19,10 @@ def get_masks_img(
     color_by_mask_id=None,
     opacity=0.35,
 ):
+    """
+    Colors the image with all given masks. Either with random colors, or by provided
+    colors from `color_by_mask_id`.
+    """
     if masks_color_option == MasksColorOptions.NONE:
         return image
 

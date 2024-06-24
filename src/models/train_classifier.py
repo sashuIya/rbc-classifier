@@ -4,8 +4,11 @@ from dataclasses import dataclass
 
 import matplotlib
 from PIL import Image
+from torchvision.transforms import Resize
 
 matplotlib.use("Agg")  # 'Agg' backend is suitable for saving figures to files
+from typing import List, Tuple
+
 import faiss
 import matplotlib.pyplot as plt
 import numpy as np
@@ -71,8 +74,8 @@ class KnnClassifyOptions:
 
 @dataclass
 class ClassifyResults:
-    decoded_labels: list[str]  # these are actual names (e.g., 'echinocyte')
-    confidence_scores: list[float]
+    decoded_labels: List[str]  # these are actual names (e.g., 'echinocyte')
+    confidence_scores: List[float]
 
 
 def _classify_embeddings(
@@ -243,20 +246,78 @@ def get_labels_from_data_loader(data_loader):
     return np.concatenate(labels_list)
 
 
+def calculate_target_size(images_list: List[np.ndarray]) -> Tuple[int, int]:
+    """
+    Calculates the target size for resizing images based on the maximum height and width.
+    """
+    heights = [img.shape[0] for img in images_list]
+    widths = [img.shape[1] for img in images_list]
+    max_height = max(heights)
+    max_width = max(widths)
+    return max(max_height, max_width), max(max_height, max_width)
+
+
+def convert_images_to_tensor(images_list: List[np.ndarray]) -> torch.Tensor:
+    """
+    Converts a list of NumPy arrays representing images into a PyTorch tensor.
+    All images are resized to the maximum height and width before stacking.
+
+    Parameters:
+    - images_list: List of NumPy arrays, where each array represents an image.
+
+    Returns:
+    - A PyTorch tensor with shape (n, c, h, w), where n is the number of images, c is the number of channels, h is the height, and w is the width.
+    """
+    # Calculate the target size based on the maximum height and width
+    target_size = calculate_target_size(images_list)
+
+    # Initialize a list to hold the resized images
+    resized_images = []
+
+    # Iterate over each image in the list
+    for image in images_list:
+        # Convert the NumPy array to a PIL Image
+        pil_image = Image.fromarray(image)
+
+        # Resize the image
+        resized_image = Resize(target_size)(pil_image)
+
+        # Convert the resized PIL Image back to a NumPy array
+        resized_array = np.array(resized_image)
+
+        # Append the resized array to the list
+        resized_images.append(resized_array)
+
+    # Convert the list of NumPy arrays to a list of PyTorch tensors
+    tensors_list = [torch.from_numpy(image) for image in resized_images]
+
+    # Stack the list of tensors along a new dimension to form a single tensor
+    images_tensor = torch.stack(tensors_list)
+
+    # Transpose the tensor to move the channel dimension to the second position
+    images_tensor = images_tensor.permute(0, 3, 1, 2)
+
+    return images_tensor
+
+
 def plot_clusters(
     tensorboard_writer: SummaryWriter,
     data_loader: DataLoader,
+    crops: List[np.ndarray],
     output_filename: str,
     embedder: Embedder,
     label_encoder: preprocessing.LabelEncoder,
 ):
     """Computes the embeddings for the given data_loader, plots and saves 2d projections."""
     embeddings, embedding_labels = _embed(embedder, data_loader, read_labels=True)
+    images_tensor = convert_images_to_tensor(crops)
     tensorboard_writer.add_embedding(
         embeddings,
+        label_img=images_tensor.float() / 255.0,
         metadata=label_encoder.inverse_transform(embedding_labels),
         tag=output_filename,
     )
+
     tsne = TSNE(n_components=2, random_state=42)
     embeddings_2d = tsne.fit_transform(embeddings)
     # Create a scatter plot with different colors for each label
@@ -338,6 +399,7 @@ def create_confusion_matrix(
     )
 
 
+@timeit
 def log_confusion_matrices_to_tensorboard(
     tensorboard_writer,
     train_loader,
@@ -374,10 +436,13 @@ def log_confusion_matrices_to_tensorboard(
     )
 
 
+@timeit
 def log_train_and_val_clusters(
     tensorboard_writer: SummaryWriter,
     train_loader: DataLoader,
+    train_crops: List[np.ndarray],
     val_loader: DataLoader,
+    val_crops: List[np.ndarray],
     embedder: nn.Module,
     label_encoder: preprocessing.LabelEncoder,
 ):
@@ -385,6 +450,7 @@ def log_train_and_val_clusters(
     plot_clusters(
         tensorboard_writer,
         train_loader,
+        train_crops,
         "train_embedding_visualization.png",
         embedder,
         label_encoder,
@@ -394,6 +460,7 @@ def log_train_and_val_clusters(
         plot_clusters(
             tensorboard_writer,
             val_loader,
+            val_crops,
             "val_embedding_visualization.png",
             embedder,
             label_encoder,
@@ -402,6 +469,7 @@ def log_train_and_val_clusters(
         print(f"An unexpected error occurred when plotting validation clusters: {e}")
 
 
+@timeit
 def train_pipeline(dir: str = None):
     if DEVICE == "cuda":
         torch.cuda.empty_cache()
@@ -410,8 +478,8 @@ def train_pipeline(dir: str = None):
     tensorboard_writer = SummaryWriter(
         log_dir=os.path.join(CLASSIFIER_TENSORBOARD_DIR, embedder_model_info.name)
     )
-    labeled_data_df = read_labeled_and_reviewed_features_for_all_images(
-        dir, check_data=True
+    labeled_data_df, crops = read_labeled_and_reviewed_features_for_all_images(
+        dir=dir, with_crops=True, check_data=True
     )
     assert (
         labeled_data_df.loc[labeled_data_df[Y_COLUMN] == LABEL_UNLABELED].shape[0] == 0
@@ -426,7 +494,9 @@ def train_pipeline(dir: str = None):
     y = label_encoder.fit_transform(y_labels)
     y_size = len(label_encoder.classes_)
 
-    x_train, x_test, y_train, y_test = train_test_split(x, y, random_state=10)
+    x_train, x_test, y_train, y_test, train_crops, val_crops = train_test_split(
+        x, y, crops, random_state=10
+    )
 
     # Use numpy.unique() to get unique elements and their counts
     unique_elements, counts = np.unique(labeled_data_df[Y_COLUMN], return_counts=True)
@@ -492,8 +562,15 @@ def train_pipeline(dir: str = None):
 
     faiss_index, faiss_labels = _create_faiss_index(train_loader, embedder)
 
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=False)
     log_train_and_val_clusters(
-        tensorboard_writer, train_loader, val_dataset, embedder, label_encoder
+        tensorboard_writer,
+        train_loader,
+        train_crops,
+        val_loader,
+        val_crops,
+        embedder,
+        label_encoder,
     )
     log_confusion_matrices_to_tensorboard(
         tensorboard_writer,

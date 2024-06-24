@@ -8,7 +8,7 @@ from dash import Input, Output, State, callback, ctx, dcc, html
 from dash.exceptions import PreventUpdate
 
 from src.common.filepath_util import (
-    read_image,
+    ImageDataReader,
     read_images_metadata,
     write_images_metadata,
 )
@@ -111,7 +111,8 @@ layout = html.Div(
     Input(id("scale-x1"), "value"),
 )
 def handle_measurements_update(image_filepath, height, micrometers, scale_x0, scale_x1):
-    image = read_image(image_filepath)
+    image_data_reader = ImageDataReader(image_filepath)
+    image = image_data_reader.image
     image_fig = go.FigureWidget()
     image_fig.update_layout(autosize=False, width=1024, height=1024)
     img_trace = px.imshow(image).data[0]
