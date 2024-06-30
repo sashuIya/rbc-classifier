@@ -286,6 +286,7 @@ layout = dbc.Container(
                     label="Preview",
                     tab_id="preview",
                     children=[
+                        dbc.Row(html.Div(style={"padding": "10px"})),
                         dbc.Row(
                             [
                                 dbc.Col(
@@ -303,6 +304,7 @@ layout = dbc.Container(
                     label="Manual labeling",
                     tab_id="manual-labeling",
                     children=[
+                        dbc.Row(html.Div(style={"padding": "10px"})),
                         dbc.Row(
                             [
                                 dbc.Col(id=id("all-masks"), width="auto"),
