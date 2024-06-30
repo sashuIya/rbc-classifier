@@ -2,6 +2,7 @@ import base64
 import os
 from dataclasses import dataclass
 from pathlib import PurePath
+from typing import List
 
 import cv2
 import dash_bootstrap_components as dbc
@@ -401,7 +402,7 @@ def generate_labeled_mask_preview_info(
 def generate_crop_with_radio(
     id_prefix: str,
     labeled_mask_preview_info: LabeledMaskPreviewInfo,
-    labels: list[str],
+    labels: List[str],
 ) -> dbc.Form:
     mask = labeled_mask_preview_info.mask
     mask_id = mask["id"]
@@ -463,8 +464,8 @@ def generate_crop_with_radio(
 
 def generate_labeled_masks_previews(
     radio_buttons_prefix: str,
-    labeled_mask_preview_infos: list[LabeledMaskPreviewInfo],
-) -> list[dbc.Form]:
+    labeled_mask_preview_infos: List[LabeledMaskPreviewInfo],
+) -> List[dbc.Form]:
     labels = list(LABELS_METADATA.get_list_of_labels())
 
     image_radio_items = []
