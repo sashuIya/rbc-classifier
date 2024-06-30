@@ -149,13 +149,39 @@ layout = dbc.Container(
             id=id("el"),
         ),
         html.H1(children="Labeling tool", style={"textAlign": "center"}),
-        image_selection_dropdown(id=id("image-filepath"), predicate_fn=is_completed),
-        dcc.Dropdown(
-            CLASSIFIER_MODEL_FILEPATHS,
-            CLASSIFIER_MODEL_FILEPATHS[0],
-            id=id("classifier-model"),
+        dbc.Row(
+            [
+                dbc.Col(html.Label("Image filepath:"), width=1),
+                dbc.Col(
+                    image_selection_dropdown(
+                        id=id("image-filepath"), predicate_fn=is_completed
+                    ),
+                    width=11,
+                ),
+            ]
         ),
-        dcc.Dropdown([], None, id=id("masks-options")),
+        dbc.Row(
+            [
+                dbc.Col(html.Label("Classifier:"), width=1),
+                dbc.Col(
+                    dcc.Dropdown(
+                        CLASSIFIER_MODEL_FILEPATHS,
+                        CLASSIFIER_MODEL_FILEPATHS[0],
+                        id=id("classifier-model"),
+                    ),
+                    width=11,
+                ),
+            ]
+        ),
+        dbc.Row(
+            [
+                dbc.Col(html.Label("Masks set:"), width=1),
+                dbc.Col(
+                    dcc.Dropdown([], None, id=id("masks-options")),
+                    width=11,
+                ),
+            ]
+        ),
         dbc.Button(
             "Train classifier on labeled data",
             id=id("train-classifier-button"),
