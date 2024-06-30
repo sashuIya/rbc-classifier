@@ -5,3 +5,37 @@
 .points_per_side_slider {
   width: 100%
 }
+
+.horizontal-space {
+  margin-right: 20px
+}
+
+.masks-class-preview-row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+}
+
+.labeled-mask-card {
+  width: max-content;
+  /* Light grey border */
+  border: 2px solid #cccccc;
+  /* Rounded corners for a softer look */
+  border-radius: 5px;
+  /* Internal space around content */
+  padding: 10px;
+  margin-bottom: 50px;
+  /* Subtle shadow for depth */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.labeled-mask-card:hover {
+  /* Change the border color to a darker grey on hover */
+  border-color: #999999;
+
+  /* Enhance the shadow on hover for a lifted effect */
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.2);
+
+  /* Smooth transition for the hover effects */
+  transition: all 0.3s ease;
+}

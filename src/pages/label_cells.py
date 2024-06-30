@@ -1,5 +1,6 @@
 import base64
 import os
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import PurePath
 from typing import List
@@ -409,34 +410,39 @@ def generate_crop_with_radio(
     return dbc.Form(
         [
             dbc.Row(
+                html.Div(
+                    "mask_id: {}, area: {}, confidence_score: {}".format(
+                        mask_id,
+                        mask["area"],
+                        labeled_mask_preview_info.confidence_score,
+                    ),
+                    id={
+                        "type": id(f"{id_prefix}-mask-id-div"),
+                        "index": mask_id,
+                    },
+                ),
+            ),
+            dbc.Row(
                 [
                     dbc.Col(
-                        html.Div(
-                            "mask_id: {}, area: {}, confidence_score: {}".format(
-                                mask_id,
-                                mask["area"],
-                                labeled_mask_preview_info.confidence_score,
-                            ),
-                            id={
-                                "type": id(f"{id_prefix}-mask-id-div"),
-                                "index": mask_id,
-                            },
-                        ),
-                    ),
-                    dbc.Col(
                         crop_html(labeled_mask_preview_info.highlighted_crop),
+                        className="horizontal-space",
                         style={
                             "width": "{}px".format(
                                 labeled_mask_preview_info.highlighted_crop.shape[1]
-                            )
+                            ),
+                            "margin-right": "20px",
                         },
+                        width="auto",
                     ),
                     dbc.Col(
                         crop_html(labeled_mask_preview_info.original_crop),
+                        className="horizontal-space",
                         style={
                             "width": "{}px".format(
                                 labeled_mask_preview_info.original_crop.shape[1]
-                            )
+                            ),
+                            "margin-right": "20px",
                         },
                     ),
                     dbc.Col(
@@ -455,10 +461,8 @@ def generate_crop_with_radio(
                 className="img-container",
                 style={"margin-bottom": "5px"},
             ),
-            dbc.Row(
-                dbc.Col(html.Hr(style={"margin-top": "10px", "margin-bottom": "20px"}))
-            ),
         ],
+        className="labeled-mask-card",
     )
 
 
@@ -893,7 +897,7 @@ def handle_masks_filepath_selection(selected_masks_option, image_filepath):
 
     assert len(masks) == labeled_masks_df.shape[0]
 
-    crop_infos = []
+    crop_infos: List[LabeledMaskPreviewInfo] = []
     for (_, row), mask in zip(labeled_masks_df.iterrows(), masks):
         assert mask["id"] == row[MASK_ID_COLUMN], (mask["id"], row[MASK_ID_COLUMN])
         confidence_score = get_confidence_score(labeled_masks_df, mask["id"])
@@ -907,11 +911,26 @@ def handle_masks_filepath_selection(selected_masks_option, image_filepath):
         crop_infos, key=lambda crop_info: crop_info.confidence_score
     )
 
-    all_mask_previews = generate_labeled_masks_previews(
-        ALL_MASKS_RADIO_BUTTONS_PREFIX, sorted_crop_infos
-    )
+    grouped_by_label = defaultdict(list)
+    for crop_info in sorted_crop_infos:
+        grouped_by_label[crop_info.label].append(crop_info)
 
-    return labeled_masks_df.to_dict("records"), all_mask_previews
+    rows: List[dbc.Row] = []
+    for crop_infos in grouped_by_label.values():
+        mask_previews = generate_labeled_masks_previews(
+            ALL_MASKS_RADIO_BUTTONS_PREFIX, crop_infos
+        )
+        rows.append(
+            dbc.Row(
+                [
+                    dbc.Col(mask_preview, style={"padding": "0px"})
+                    for mask_preview in mask_previews
+                ],
+                className="masks-class-preview-row",
+            ),
+        )
+
+    return labeled_masks_df.to_dict("records"), rows
 
 
 @callback(
