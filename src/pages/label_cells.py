@@ -169,7 +169,7 @@ layout = dbc.Container(
             n_clicks=0,
         ),
         dbc.Button(
-            "Save masks",
+            "Save labels",
             color="warning",
             id=id("save-labels-button"),
             className="me-1",
