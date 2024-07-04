@@ -19,7 +19,6 @@ import torch.nn as nn
 import torch.optim as optim
 from pytorch_metric_learning import distances, losses, miners, reducers, testers
 from pytorch_metric_learning.utils.accuracy_calculator import AccuracyCalculator
-from scipy.stats import mode
 from sklearn import preprocessing
 from sklearn.manifold import TSNE
 from sklearn.metrics import confusion_matrix
@@ -78,6 +77,26 @@ class ClassifyResults:
     confidence_scores: List[float]
 
 
+def _compute_knn_confidence_with_distances(neighbor_labels, similarities):
+    # Calculate weights based on cosine similarities (they are in [-1, 1])
+    # range.
+    weights = [(similarity + 1.0) / 2.0 for similarity in similarities]
+
+    # Compute weighted votes for each class
+    unique_labels = np.unique(neighbor_labels)
+    weighted_votes = {label: 0.0 for label in unique_labels}
+    for label, weight in zip(neighbor_labels, weights):
+        weighted_votes[label] += weight
+
+    # Determine the mode (most frequent label)
+    mode_label = max(weighted_votes, key=weighted_votes.get)
+
+    # Calculate confidence score for the mode label
+    confidence_score = weighted_votes[mode_label] / sum(weighted_votes.values())
+
+    return mode_label, confidence_score
+
+
 def _classify_embeddings(
     embeddings, faiss_index, faiss_labels, label_encoder, options: KnnClassifyOptions
 ) -> ClassifyResults:
@@ -91,21 +110,16 @@ def _classify_embeddings(
     for i in range(embeddings.shape[0]):
         query_embedding = embeddings[i : i + 1]
 
-        # Perform a similarity search to find nearest neighbors.
-        distances, indices = faiss_index.search(
+        # Perform a similarity search to find nearest neighbors in cosine space.
+        similarities, indices = faiss_index.search(
             query_embedding.astype(np.float32), options.k
         )
 
-        # Determine the majority label among the neighbors.
-        neighbor_labels = faiss_labels[indices[0]]
-        mode_result = mode(neighbor_labels)
-
-        confidence_score = compute_confidence_score(
-            distances, neighbor_labels, mode_result
+        encoded_label, confidence_score = _compute_knn_confidence_with_distances(
+            faiss_labels[indices[0]], similarities[0]
         )
-        classified_label = LABEL_UNLABELED
-        if mode_result.count >= options.min_votes:
-            classified_label = label_encoder.inverse_transform([mode_result.mode])[0]
+        classified_label = label_encoder.inverse_transform([encoded_label])[0]
+
         decoded_predicted_labels.append(classified_label)
         confidence_scores.append(confidence_score)
 
@@ -235,29 +249,21 @@ def test_embedder(train_set, test_set, model, accuracy_calculator) -> float:
     return accuracy
 
 
-def get_labels_from_data_loader(data_loader):
-    # Create empty lists to store embeddings and corresponding labels
-    labels_list = []
-
-    with torch.no_grad():
-        for _, labels_batch in data_loader:
-            labels_list.append(labels_batch.numpy())
-
-    return np.concatenate(labels_list)
-
-
 def calculate_target_size(images_list: List[np.ndarray]) -> Tuple[int, int]:
     """
     Calculates the target size for resizing images based on the maximum height and width.
     """
-    heights = [img.shape[0] for img in images_list]
-    widths = [img.shape[1] for img in images_list]
+    heights = [img.shape[0] for img in images_list] + [0]
+    widths = [img.shape[1] for img in images_list] + [0]
     max_height = max(heights)
     max_width = max(widths)
-    return max(max_height, max_width), max(max_height, max_width)
+    max_value = max(max_height, max_width)
+
+    # Tensorboard supports only square images.
+    return max_value, max_value
 
 
-def convert_images_to_tensor(images_list: List[np.ndarray]) -> torch.Tensor:
+def _convert_images_to_tensor(images_list: List[np.ndarray]) -> torch.Tensor:
     """
     Converts a list of NumPy arrays representing images into a PyTorch tensor.
     All images are resized to the maximum height and width before stacking.
@@ -300,7 +306,7 @@ def convert_images_to_tensor(images_list: List[np.ndarray]) -> torch.Tensor:
     return images_tensor
 
 
-def plot_clusters(
+def _plot_clusters(
     tensorboard_writer: SummaryWriter,
     data_loader: DataLoader,
     crops: List[np.ndarray],
@@ -310,7 +316,7 @@ def plot_clusters(
 ):
     """Computes the embeddings for the given data_loader, plots and saves 2d projections."""
     embeddings, embedding_labels = _embed(embedder, data_loader, read_labels=True)
-    images_tensor = convert_images_to_tensor(crops)
+    images_tensor = _convert_images_to_tensor(crops)
     tensorboard_writer.add_embedding(
         embeddings,
         label_img=images_tensor.float() / 255.0,
@@ -335,7 +341,7 @@ def plot_clusters(
     plt.savefig(output_filename)
 
 
-def convert_confusion_matrix_to_img(cm, labels, title):
+def _convert_confusion_matrix_to_img(cm, labels, title):
     """Converts a confusion matrix to an image."""
     # Create a heatmap
     fig, ax = plt.subplots(figsize=(10, 10))
@@ -378,7 +384,7 @@ def convert_confusion_matrix_to_img(cm, labels, title):
     return img_array
 
 
-def create_confusion_matrix(
+def _create_confusion_matrix(
     data_loader: DataLoader,
     embedder: nn.Module,
     faiss_index,
@@ -411,24 +417,24 @@ def log_confusion_matrices_to_tensorboard(
     knn_options,
     step,
 ):
-    train_confusion_matrix = create_confusion_matrix(
+    train_confusion_matrix = _create_confusion_matrix(
         train_loader, embedder, faiss_index, faiss_labels, label_encoder, knn_options
     )
     tensorboard_writer.add_image(
         "Train Confusion Matrix",
-        convert_confusion_matrix_to_img(
+        _convert_confusion_matrix_to_img(
             train_confusion_matrix, label_encoder.classes_, "Train Confusion Matrix"
         ),
         step,
         dataformats="HWC",
     )
 
-    val_confusion_matrix = create_confusion_matrix(
+    val_confusion_matrix = _create_confusion_matrix(
         val_loader, embedder, faiss_index, faiss_labels, label_encoder, knn_options
     )
     tensorboard_writer.add_image(
         "Validation Confusion Matrix",
-        convert_confusion_matrix_to_img(
+        _convert_confusion_matrix_to_img(
             val_confusion_matrix, label_encoder.classes_, "Validation Confusion Matrix"
         ),
         step,
@@ -447,7 +453,7 @@ def log_train_and_val_clusters(
     label_encoder: preprocessing.LabelEncoder,
 ):
     # Plot and save train and val embeddings (as 2d projections).
-    plot_clusters(
+    _plot_clusters(
         tensorboard_writer,
         train_loader,
         train_crops,
@@ -457,7 +463,7 @@ def log_train_and_val_clusters(
     )
 
     try:
-        plot_clusters(
+        _plot_clusters(
             tensorboard_writer,
             val_loader,
             val_crops,
@@ -583,7 +589,6 @@ def train_pipeline(dir: str = None):
         knn_options=KnnClassifyOptions(),
         step=num_epochs * len(train_loader),
     )
-
     write_embedder_and_faiss(
         embedder,
         embedder_model_info,
@@ -594,35 +599,6 @@ def train_pipeline(dir: str = None):
         validation_accuracy=round(validation_accuracy, 2),
         epochs=num_epochs,
     )
-
-
-def compute_confidence_score(distances, neighbor_labels, mode_result):
-    """
-    Compute the confidence score for the classification decision based on the distances
-    and labels of the nearest neighbors.
-
-    Parameters:
-    - distances: Array-like object containing the distances of the nearest neighbors.
-    - neighbor_labels: Array-like object containing the labels of the nearest neighbors.
-    - mode_result: Result from scipy.stats.mode, containing the mode (most common label)
-                   and its count among the nearest neighbors.
-
-    Returns:
-    - confidence_score: Float representing the confidence score for the classification decision.
-    """
-    # Normalize distances to sum to 1 for easier interpretation
-    normalized_distances = distances / np.sum(distances)
-
-    # Find indices of neighbors with the majority label
-    majority_label_indices = np.where(neighbor_labels == mode_result.mode)
-
-    # Extract corresponding normalized distances
-    relevant_normalized_distances = normalized_distances[0][majority_label_indices]
-
-    # Compute the average of these distances to get a single confidence score
-    average_confidence_score = 1 - np.mean(relevant_normalized_distances)
-
-    return average_confidence_score
 
 
 @timeit
