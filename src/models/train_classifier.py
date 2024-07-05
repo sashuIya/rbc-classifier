@@ -480,7 +480,7 @@ def log_train_and_val_clusters(
 
 
 @timeit
-def train_pipeline(dir: str = None):
+def train_pipeline(dir: str = None, classifier_model_filepath: str = None):
     if DEVICE == "cuda":
         torch.cuda.empty_cache()
 
@@ -496,14 +496,22 @@ def train_pipeline(dir: str = None):
     ), "Should not contain unlabeled data"
 
     x_columns = [x for x in labeled_data_df.columns if x.startswith(X_COLUMN_PREFIX)]
-    x_size = len(x_columns)
 
     x = labeled_data_df[x_columns].to_numpy()
     y_labels = labeled_data_df[Y_COLUMN].to_numpy()
-    label_encoder = preprocessing.LabelEncoder()
-    y = label_encoder.fit_transform(y_labels)
-    y_size = len(label_encoder.classes_)
 
+    # Create or load model instance and label encoder.
+    is_in_fine_tune_mode = classifier_model_filepath is not None
+    if is_in_fine_tune_mode:
+        embedder, _, _, label_encoder = read_embedder_and_faiss(
+            classifier_model_filepath
+        )
+    else:
+        label_encoder = preprocessing.LabelEncoder()
+        embedder = Embedder(len(x_columns), len(np.unique(y_labels)))
+    embedder.to(DEVICE)
+
+    y = label_encoder.fit_transform(y_labels)
     x_train, x_test, y_train, y_test, train_crops, val_crops = train_test_split(
         x, y, crops, random_state=10
     )
@@ -529,8 +537,6 @@ def train_pipeline(dir: str = None):
         val_dataset, batch_size=BATCH_SIZE, shuffle=False, pin_memory=True
     )
 
-    # Create the model instance
-    embedder = Embedder(x_size, y_size).to(DEVICE)
     optimizer = optim.Adam(embedder.parameters(), lr=0.00001)
     distance = distances.CosineSimilarity()
     reducer = reducers.ThresholdReducer(low=0)
@@ -540,7 +546,7 @@ def train_pipeline(dir: str = None):
     )
     accuracy_calculator = AccuracyCalculator(include=("precision_at_1",), k=1)
 
-    num_epochs = 300
+    num_epochs = 100 if is_in_fine_tune_mode else 300
     skip_evaluation = 5
 
     for epoch in range(1, num_epochs + 1):

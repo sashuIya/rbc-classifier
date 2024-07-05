@@ -17,6 +17,7 @@ from dash import (
     Output,
     State,
     callback,
+    ctx,
     dash_table,
     dcc,
     html,
@@ -187,6 +188,12 @@ layout = dbc.Container(
         dbc.Button(
             "Train classifier on labeled data",
             id=id("train-classifier-button"),
+            className="me-1",
+            n_clicks=0,
+        ),
+        dbc.Button(
+            "Fine tune classifier",
+            id=id("fine-tune-classifier-button"),
             className="me-1",
             n_clicks=0,
         ),
@@ -987,12 +994,23 @@ def handle_classifier_model_selection(embedder_filepath):
     Output(id("classifier-model"), "options"),
     Output(id("classifier-model"), "value"),
     Input(id("train-classifier-button"), "n_clicks"),
+    Input(id("fine-tune-classifier-button"), "n_clicks"),
     State(id("image-filepath"), "value"),
+    State(id("classifier-model"), "value"),
 )
 @timeit
-def handle_train_classifier_button(n_clicks, image_filepath):
-    if n_clicks == 0:
+def handle_train_classifier_button(
+    train_classifier_n_clicks,
+    fine_tune_classifier_n_clicks,
+    image_filepath,
+    selected_classifier_model_filepath,
+):
+    if train_classifier_n_clicks == 0 and fine_tune_classifier_n_clicks == 0:
         raise PreventUpdate
+
+    classifier_model_filepath = None
+    if ctx.triggered_id == id("fine-tune-classifier-button"):
+        classifier_model_filepath = selected_classifier_model_filepath
 
     dir = None
     # Train on data that is under the same subfolder of dataset/ as the currently
@@ -1003,7 +1021,7 @@ def handle_train_classifier_button(n_clicks, image_filepath):
             / PurePath(image_filepath).relative_to(RAW_IMAGES_DIR).parts[0]
         )
 
-    train_pipeline(dir=dir)
+    train_pipeline(dir=dir, classifier_model_filepath=classifier_model_filepath)
     model_filepaths = get_classifier_model_filepaths(as_str=True)
     if not model_filepaths:
         return ["none"], "none"
