@@ -1,7 +1,5 @@
-import base64
 import os
 from collections import defaultdict
-from dataclasses import dataclass
 from pathlib import PurePath
 from typing import List
 
@@ -28,17 +26,19 @@ from dash_extensions import EventListener
 from PIL import Image
 
 from src.common.consts import (
+    ALL_MASKS_RADIO_BUTTONS_PREFIX,
     CONFIDENCE_COLUMN,
     # Labels (options of Y_COLUMN)
     LABEL_UNLABELED,
     LABEL_WRONG,
-    LABELING_APPROVED,
     LABELING_AUTO,
     LABELING_MANUAL,
     # Labeling modes
     LABELING_MODE_COLUMN,
+    LABELING_SEMI_AUTO,
     MASK_ID_COLUMN,
     RAW_IMAGES_DIR,
+    SELECTED_MASKS_RADIO_BUTTONS_PREFIX,
     # Features metadata
     Y_COLUMN,
 )
@@ -60,8 +60,13 @@ from src.pages.widgets.image_selector import (
     image_selection_dropdown,
     is_completed,
 )
+from src.pages.widgets.masks_preview_widget import (
+    generate_labeled_mask_preview_info,
+    generate_labeled_masks_previews,
+    generate_rows_of_mask_previews,
+)
 from src.utils.dash_util import id_factory
-from src.utils.draw_util import MasksColorOptions, get_masked_crop, get_masks_img
+from src.utils.draw_util import MasksColorOptions, get_masks_img
 from src.utils.mask_util import is_point_in_mask
 from src.utils.timing import timeit
 
@@ -77,18 +82,6 @@ DISPLAY_OPTIONS = [
     DISPLAY_LABELED_DATA,
     DISPLAY_UNLABELED_DATA,
 ]
-
-ALL_MASKS_RADIO_BUTTONS_PREFIX = "all-masks"
-SELECTED_MASKS_RADIO_BUTTONS_PREFIX = "selected-masks"
-
-
-@dataclass
-class LabeledMaskPreviewInfo:
-    highlighted_crop: np.ndarray
-    original_crop: np.ndarray
-    label: str
-    mask: dict
-    confidence_score: float
 
 
 def is_valid_masks_option(masks_option: str) -> bool:
@@ -330,7 +323,7 @@ layout = dbc.Container(
 )
 
 
-def get_confidence_score(labels_df: pd.DataFrame, mask_id: int) -> float:
+def _get_confidence_score(labels_df: pd.DataFrame, mask_id: int) -> float:
     if CONFIDENCE_COLUMN not in labels_df.columns:
         return 0.0
 
@@ -346,151 +339,6 @@ def create_color_by_mask_id(labels_df):
         color_by_mask_id[mask_id] = LABELS_METADATA.get_color_by_label(label)
 
     return color_by_mask_id
-
-
-def image_to_base64(image_array):
-    # Convert the image array to base64-encoded string
-    image_base64 = base64.b64encode(image_array).decode("utf-8")
-    return image_base64
-
-
-def ndarray_to_b64(ndarray):
-    """
-    converts a np ndarray to a b64 string readable by html-img tags
-    """
-    img = cv2.cvtColor(ndarray, cv2.COLOR_RGB2BGR)
-    _, buffer = cv2.imencode(".png", img)
-    return base64.b64encode(buffer).decode("utf-8")
-
-
-def crop_html(crop):
-    bgr_crop = cv2.cvtColor(crop, cv2.COLOR_RGBA2BGR)
-    _, crop_png = cv2.imencode(".png", bgr_crop)
-    crop_base64 = base64.b64encode(crop_png).decode("utf-8")
-    crop_html = html.Img(
-        src=f"data:image/png;base64,{crop_base64}",
-        style={"display": "block", "margin-bottom": "10px"},
-        className="img-item",
-    )
-
-    return crop_html
-
-
-def generate_labeled_mask_preview_info(
-    image: np.array, mask: dict, label: str, confidence_score: float
-) -> LabeledMaskPreviewInfo:
-    """Generates a preview of the given `mask` labeled with the given `label`.
-
-    Args:
-        image (np.array): Image to crop.
-        mask (dict): A mask from SAM.
-        label (str): label of the mask.
-        confidence_score (float): Confidence score of the label.
-
-    Returns:
-        LabeledMaskPreview: An instance containing (highlighted_crop, original_crop, label, mask, confidence_score).
-    """
-    highlighted_crop = get_masked_crop(
-        image,
-        mask,
-        xy_threshold=20,
-        with_highlighting=True,
-        color_mask=LABELS_METADATA.get_color_by_label(label),
-    )
-    original_crop = get_masked_crop(
-        image,
-        mask,
-        xy_threshold=20,
-        with_highlighting=False,
-        color_mask=LABELS_METADATA.get_color_by_label(label),
-    )
-    return LabeledMaskPreviewInfo(
-        highlighted_crop, original_crop, label, mask, confidence_score
-    )
-
-
-def generate_crop_with_radio(
-    id_prefix: str,
-    labeled_mask_preview_info: LabeledMaskPreviewInfo,
-    labels: List[str],
-) -> dbc.Form:
-    mask = labeled_mask_preview_info.mask
-    mask_id = mask["id"]
-    return dbc.Form(
-        [
-            dbc.Row(
-                html.Div(
-                    "mask_id: {}, area: {}, confidence_score: {}".format(
-                        mask_id,
-                        mask["area"],
-                        labeled_mask_preview_info.confidence_score,
-                    ),
-                    id={
-                        "type": id(f"{id_prefix}-mask-id-div"),
-                        "index": mask_id,
-                    },
-                ),
-            ),
-            dbc.Row(
-                [
-                    dbc.Col(
-                        crop_html(labeled_mask_preview_info.highlighted_crop),
-                        className="horizontal-space",
-                        style={
-                            "width": "{}px".format(
-                                labeled_mask_preview_info.highlighted_crop.shape[1]
-                            ),
-                            "margin-right": "20px",
-                        },
-                        width="auto",
-                    ),
-                    dbc.Col(
-                        crop_html(labeled_mask_preview_info.original_crop),
-                        className="horizontal-space",
-                        style={
-                            "width": "{}px".format(
-                                labeled_mask_preview_info.original_crop.shape[1]
-                            ),
-                            "margin-right": "20px",
-                        },
-                    ),
-                    dbc.Col(
-                        dbc.RadioItems(
-                            options=labels,
-                            value=labeled_mask_preview_info.label,
-                            id={
-                                "type": id(f"{id_prefix}-radio-item"),
-                                "index": mask_id,
-                            },
-                            inline=False,
-                            className="ml-3",
-                        )
-                    ),
-                ],
-                className="img-container",
-                style={"margin-bottom": "5px"},
-            ),
-        ],
-        className="labeled-mask-card",
-    )
-
-
-def generate_labeled_masks_previews(
-    radio_buttons_prefix: str,
-    labeled_mask_preview_infos: List[LabeledMaskPreviewInfo],
-) -> List[dbc.Form]:
-    labels = list(LABELS_METADATA.get_list_of_labels())
-
-    image_radio_items = []
-    for info in labeled_mask_preview_infos:
-        image_radio_item = generate_crop_with_radio(
-            id_prefix=radio_buttons_prefix,
-            labeled_mask_preview_info=info,
-            labels=labels,
-        )
-        image_radio_items.append(image_radio_item)
-
-    return image_radio_items
 
 
 @timeit
@@ -655,7 +503,6 @@ def handle_all_masks_radio_button_click(labels, ids, labeled_masks: dict):
 
         if loc[Y_COLUMN].values[0] != label:
             modified_labels.append((mask_id, label, LABELING_MANUAL))
-            loc = (label, LABELING_MANUAL)
 
     return modified_labels
 
@@ -734,16 +581,19 @@ def handle_canvas_click(
             continue
 
         label = active_label if len(clicked_crop_infos) == 0 else LABEL_WRONG
-        modified_labels.append((mask_id, label, LABELING_MANUAL))
-        confidence_score = get_confidence_score(labeled_masks_df, mask_id)
+        labeling_mode = LABELING_MANUAL
+        modified_labels.append((mask_id, label, labeling_mode))
+        confidence_score = _get_confidence_score(labeled_masks_df, mask_id)
         clicked_crop_infos.append(
-            generate_labeled_mask_preview_info(image, mask, label, confidence_score)
+            generate_labeled_mask_preview_info(
+                image, mask, label, labeling_mode, confidence_score, LABELS_METADATA
+            )
         )
 
     return (
         html.Div("x: {}, y: {}".format(x, y)),
         generate_labeled_masks_previews(
-            SELECTED_MASKS_RADIO_BUTTONS_PREFIX, clicked_crop_infos
+            SELECTED_MASKS_RADIO_BUTTONS_PREFIX, clicked_crop_infos, LABELS_METADATA
         ),
         modified_labels,
     )
@@ -787,7 +637,7 @@ def handle_save_labels_button_click(
         # & (labeled_masks[Y_COLUMN] != LABEL_WRONG)
         & (labeled_masks_df[LABELING_MODE_COLUMN] == LABELING_AUTO),
         LABELING_MODE_COLUMN,
-    ] = LABELING_APPROVED
+    ] = LABELING_SEMI_AUTO
 
     image_data_reader = ImageDataReader(image_filepath)
     masks_features = image_data_reader.read_masks_features(selected_masks_option)
@@ -893,53 +743,20 @@ def handle_masks_filepath_selection(selected_masks_option, image_filepath):
         raise PreventUpdate
 
     image_data_reader = ImageDataReader(image_filepath)
-    print("selected_masks_option:", selected_masks_option)
     masks = image_data_reader.read_masks(selected_masks_option)
     labeled_masks_df = image_data_reader.read_masks_features(selected_masks_option)
-    print("read labeled_masks, shape", labeled_masks_df.shape)
     if CONFIDENCE_COLUMN not in labeled_masks_df.columns:
         labeled_masks_df[CONFIDENCE_COLUMN] = 0.0
     labeled_masks_df = labeled_masks_df[
         [MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN, CONFIDENCE_COLUMN]
     ]
-    print(labeled_masks_df.head())
 
     assert len(masks) == labeled_masks_df.shape[0]
-
-    crop_infos: List[LabeledMaskPreviewInfo] = []
-    for (_, row), mask in zip(labeled_masks_df.iterrows(), masks):
-        assert mask["id"] == row[MASK_ID_COLUMN], (mask["id"], row[MASK_ID_COLUMN])
-        confidence_score = get_confidence_score(labeled_masks_df, mask["id"])
-        crop_infos.append(
-            generate_labeled_mask_preview_info(
-                image_data_reader.image, mask, row[Y_COLUMN], confidence_score
-            )
-        )
-
-    sorted_crop_infos = sorted(
-        crop_infos, key=lambda crop_info: crop_info.confidence_score
+    rows_of_mask_previews = generate_rows_of_mask_previews(
+        image_data_reader.image, labeled_masks_df, masks, LABELS_METADATA
     )
 
-    grouped_by_label = defaultdict(list)
-    for crop_info in sorted_crop_infos:
-        grouped_by_label[crop_info.label].append(crop_info)
-
-    rows: List[dbc.Row] = []
-    for crop_infos in grouped_by_label.values():
-        mask_previews = generate_labeled_masks_previews(
-            ALL_MASKS_RADIO_BUTTONS_PREFIX, crop_infos
-        )
-        rows.append(
-            dbc.Row(
-                [
-                    dbc.Col(mask_preview, style={"padding": "0px"})
-                    for mask_preview in mask_previews
-                ],
-                className="masks-class-preview-row",
-            ),
-        )
-
-    return labeled_masks_df.to_dict("records"), rows
+    return labeled_masks_df.to_dict("records"), rows_of_mask_previews
 
 
 @callback(
@@ -1055,6 +872,7 @@ def handle_run_classifier_button(
     classify_results = classify(labeled_masks[unlabled_rows], classifier_model_filepath)
 
     labeled_masks.loc[unlabled_rows, Y_COLUMN] = classify_results.decoded_labels
+    labeled_masks.loc[unlabled_rows, LABELING_MODE_COLUMN] = LABELING_AUTO
 
     # Ensure the DataFrame has a column for confidence scores
     if CONFIDENCE_COLUMN not in labeled_masks.columns:

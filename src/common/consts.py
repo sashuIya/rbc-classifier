@@ -18,7 +18,7 @@ LABELING_MANUAL = "manual"
 # labeled by classification model
 LABELING_AUTO = "auto"
 # labeled by classification model and checked by human
-LABELING_APPROVED = "semi-auto"
+LABELING_SEMI_AUTO = "semi-auto"
 
 DATA_PATH = os.path.normpath("./dataset")
 RAW_IMAGES_DIR = os.path.join(DATA_PATH, "raw")
@@ -47,3 +47,6 @@ DEFAULT_SAM_CONFIG = dict(
     crop_n_points_downscale_factor=1,
     min_mask_region_area=100,
 )
+
+ALL_MASKS_RADIO_BUTTONS_PREFIX = "all-masks"
+SELECTED_MASKS_RADIO_BUTTONS_PREFIX = "selected-masks"

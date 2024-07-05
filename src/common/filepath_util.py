@@ -19,9 +19,9 @@ from src.common.consts import (
     IMAGES_METADATA_FILEPATH,
     INTERIM_DATA_DIR,
     LABEL_UNLABELED,
-    LABELING_APPROVED,
     LABELING_MANUAL,
     LABELING_MODE_COLUMN,
+    LABELING_SEMI_AUTO,
     LABELS_METADATA_FILEPATH,
     RAW_IMAGES_DIR,
     SAM_LATEST_USED_CONFIG_FILEPATH,
@@ -418,7 +418,7 @@ def read_labeled_and_reviewed_features_for_all_images(
 
     df = df[
         (df[Y_COLUMN] != LABEL_UNLABELED)
-        & (df[LABELING_MODE_COLUMN].isin([LABELING_MANUAL, LABELING_APPROVED]))
+        & (df[LABELING_MODE_COLUMN].isin([LABELING_MANUAL, LABELING_SEMI_AUTO]))
     ]
 
     # Apply the same filtering to the crops list using the indices of the filtered rows
