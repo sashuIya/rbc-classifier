@@ -249,7 +249,7 @@ def test_embedder(train_set, test_set, model, accuracy_calculator) -> float:
     return accuracy
 
 
-def calculate_target_size(images_list: List[np.ndarray]) -> Tuple[int, int]:
+def _calculate_target_size(images_list: List[np.ndarray]) -> Tuple[int, int]:
     """
     Calculates the target size for resizing images based on the maximum height and width.
     """
@@ -275,7 +275,7 @@ def _convert_images_to_tensor(images_list: List[np.ndarray]) -> torch.Tensor:
     - A PyTorch tensor with shape (n, c, h, w), where n is the number of images, c is the number of channels, h is the height, and w is the width.
     """
     # Calculate the target size based on the maximum height and width
-    target_size = calculate_target_size(images_list)
+    target_size = _calculate_target_size(images_list)
 
     # Initialize a list to hold the resized images
     resized_images = []
@@ -313,16 +313,18 @@ def _plot_clusters(
     output_filename: str,
     embedder: Embedder,
     label_encoder: preprocessing.LabelEncoder,
+    log_images_to_tensorboard: bool = False,
 ):
     """Computes the embeddings for the given data_loader, plots and saves 2d projections."""
     embeddings, embedding_labels = _embed(embedder, data_loader, read_labels=True)
-    images_tensor = _convert_images_to_tensor(crops)
-    tensorboard_writer.add_embedding(
-        embeddings,
-        label_img=images_tensor.float() / 255.0,
-        metadata=label_encoder.inverse_transform(embedding_labels),
-        tag=output_filename,
-    )
+    if log_images_to_tensorboard:
+        images_tensor = _convert_images_to_tensor(crops)
+        tensorboard_writer.add_embedding(
+            embeddings,
+            label_img=images_tensor.float() / 255.0,
+            metadata=label_encoder.inverse_transform(embedding_labels),
+            tag=output_filename,
+        )
 
     tsne = TSNE(n_components=2, random_state=42)
     embeddings_2d = tsne.fit_transform(embeddings)
@@ -460,6 +462,7 @@ def log_train_and_val_clusters(
         "train_embedding_visualization.png",
         embedder,
         label_encoder,
+        log_images_to_tensorboard=False,
     )
 
     try:
@@ -470,6 +473,7 @@ def log_train_and_val_clusters(
             "val_embedding_visualization.png",
             embedder,
             label_encoder,
+            log_images_to_tensorboard=False,
         )
     except Exception as e:
         print(f"An unexpected error occurred when plotting validation clusters: {e}")
