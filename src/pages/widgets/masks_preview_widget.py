@@ -184,6 +184,7 @@ def generate_rows_of_mask_previews(
     labeled_masks_df: pd.DataFrame,
     masks: List[dict],
     labels_metadata: LabelsMetadata,
+    radio_buttons_prefix: str,
 ) -> List[dbc.Row]:
     crop_infos: List[LabeledMaskPreviewInfo] = []
     for (_, row), mask in zip(labeled_masks_df.iterrows(), masks):
@@ -211,7 +212,7 @@ def generate_rows_of_mask_previews(
     rows: List[dbc.Row] = []
     for crop_infos in grouped_by_label.values():
         mask_previews = generate_labeled_masks_previews(
-            ALL_MASKS_RADIO_BUTTONS_PREFIX, crop_infos, labels_metadata
+            radio_buttons_prefix, crop_infos, labels_metadata
         )
         rows.append(
             dbc.Row(

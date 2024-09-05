@@ -18,7 +18,8 @@ LABELING_MANUAL = "manual"
 # labeled by classification model
 LABELING_AUTO = "auto"
 # labeled by classification model and checked by human
-LABELING_SEMI_AUTO = "semi-auto"
+LABELING_NEEDS_REVIEW = "needs-review"
+LABELING_REVIEWED = "reviewed"
 
 DATA_PATH = os.path.normpath("./dataset")
 RAW_IMAGES_DIR = os.path.join(DATA_PATH, "raw")
@@ -50,3 +51,4 @@ DEFAULT_SAM_CONFIG = dict(
 
 ALL_MASKS_RADIO_BUTTONS_PREFIX = "all-masks"
 SELECTED_MASKS_RADIO_BUTTONS_PREFIX = "selected-masks"
+RLHF_MASKS_RADIO_BUTTONS_PREFIX = "rlhf-masks"

@@ -35,9 +35,11 @@ from src.common.consts import (
     LABELING_MANUAL,
     # Labeling modes
     LABELING_MODE_COLUMN,
-    LABELING_SEMI_AUTO,
+    LABELING_NEEDS_REVIEW,
+    LABELING_REVIEWED,
     MASK_ID_COLUMN,
     RAW_IMAGES_DIR,
+    RLHF_MASKS_RADIO_BUTTONS_PREFIX,
     SELECTED_MASKS_RADIO_BUTTONS_PREFIX,
     # Features metadata
     Y_COLUMN,
@@ -52,6 +54,7 @@ from src.common.filepath_util import (
     write_images_metadata,
 )
 from src.models.train_classifier import (
+    ClassifyResults,
     classify,
     train_pipeline,
 )
@@ -312,15 +315,43 @@ layout = dbc.Container(
                         ),
                     ],
                 ),
+                dbc.Tab(
+                    label="RLFH labeling",
+                    tab_id="rlhf-labeling",
+                    children=[
+                        dbc.Row(html.Div(style={"padding": "10px"})),
+                        dbc.Row(
+                            [
+                                dbc.Col(
+                                    dbc.Button(
+                                        "Save reviewed labels, fine-tune classifier, and classify again",
+                                        id=id("rlhf-step-button"),
+                                        className="me-1",
+                                        n_clicks=0,
+                                    )
+                                ),
+                                dbc.Col(id=id("rlhf-masks"), width="auto"),
+                            ],
+                        ),
+                    ],
+                ),
             ],
             id=id("tabs"),
             active_tab="preview",
         ),
+        # pd.DataFrame of [MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN, CONFIDENCE_COLUMN]
         dcc.Store(id=id("labeled-masks")),
+        # List of (mask_id, label, LABELING_MANUAL)
         dcc.Store(id=id("modified-labels")),
     ],
     fluid=True,
 )
+
+
+def _convert_labeled_masks_df_to_dcc_store_format(labeled_masks_df):
+    return labeled_masks_df[
+        [MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN, CONFIDENCE_COLUMN]
+    ]
 
 
 def _get_confidence_score(labels_df: pd.DataFrame, mask_id: int) -> float:
@@ -476,6 +507,25 @@ def update_labeled_masks(modified_labels, labeled_masks: dict):
     return labeled_masks.to_dict("records")
 
 
+def handle_label_radio_button_click(
+    labels: List[str], ids: List[str], labeled_masks: dict
+) -> List:
+    labeled_masks = pd.DataFrame(labeled_masks)
+    modified_labels = []
+    for label, id in zip(labels, ids):
+        mask_id = id["index"]
+
+        loc = labeled_masks.loc[
+            labeled_masks[MASK_ID_COLUMN] == mask_id,
+            [Y_COLUMN, LABELING_MODE_COLUMN],
+        ]
+
+        if loc[Y_COLUMN].values[0] != label:
+            modified_labels.append((mask_id, label, LABELING_MANUAL))
+
+    return modified_labels
+
+
 @callback(
     Output(id("modified-labels"), "data", allow_duplicate=True),
     Input(
@@ -491,20 +541,7 @@ def update_labeled_masks(modified_labels, labeled_masks: dict):
 )
 @timeit
 def handle_all_masks_radio_button_click(labels, ids, labeled_masks: dict):
-    labeled_masks = pd.DataFrame(labeled_masks)
-    modified_labels = []
-    for label, id in zip(labels, ids):
-        mask_id = id["index"]
-
-        loc = labeled_masks.loc[
-            labeled_masks[MASK_ID_COLUMN] == mask_id,
-            [Y_COLUMN, LABELING_MODE_COLUMN],
-        ]
-
-        if loc[Y_COLUMN].values[0] != label:
-            modified_labels.append((mask_id, label, LABELING_MANUAL))
-
-    return modified_labels
+    return handle_label_radio_button_click(labels, ids, labeled_masks)
 
 
 @callback(
@@ -523,21 +560,26 @@ def handle_all_masks_radio_button_click(labels, ids, labeled_masks: dict):
 )
 @timeit
 def handle_selected_masks_radio_button_click(labels, ids, labeled_masks: dict):
-    labeled_masks = pd.DataFrame(labeled_masks)
-    modified_labels = []
-    for label, id in zip(labels, ids):
-        mask_id = id["index"]
+    return handle_label_radio_button_click(labels, ids, labeled_masks)
 
-        loc = labeled_masks.loc[
-            labeled_masks[MASK_ID_COLUMN] == mask_id,
-            [Y_COLUMN, LABELING_MODE_COLUMN],
-        ]
 
-        if loc[Y_COLUMN].values[0] != label:
-            modified_labels.append((mask_id, label, LABELING_MANUAL))
-            loc = (label, LABELING_MANUAL)
-
-    return modified_labels
+@callback(
+    Output(id("modified-labels"), "data", allow_duplicate=True),
+    Input(
+        {"type": id(f"{RLHF_MASKS_RADIO_BUTTONS_PREFIX}-radio-item"), "index": ALL},
+        "value",
+    ),
+    State(
+        {"type": id(f"{RLHF_MASKS_RADIO_BUTTONS_PREFIX}-radio-item"), "index": ALL},
+        "id",
+    ),
+    State(id("labeled-masks"), "data"),
+    prevent_initial_call=True,
+    suppress_callback_exceptions=True,
+)
+@timeit
+def handle_rlhf_masks_radio_button_click(labels, ids, labeled_masks: dict):
+    return handle_label_radio_button_click(labels, ids, labeled_masks)
 
 
 @callback(
@@ -617,36 +659,12 @@ def handle_reset_labels_button_click(n_clicks, labeled_masks_df):
     return labeled_masks_df.to_dict("records")
 
 
-@callback(
-    Input(id("save-labels-button"), "n_clicks"),
-    State(id("labeled-masks"), "data"),
-    State(id("image-filepath"), "value"),
-    State(id("masks-options"), "value"),
-)
-@timeit
-def handle_save_labels_button_click(
-    n_clicks, labeled_masks_df, image_filepath, selected_masks_option
+def save_results(
+    image_data_reader: ImageDataReader,
+    labeled_masks_df: pd.DataFrame,
+    selected_masks_option: str,
 ):
-    if n_clicks == 0 or not labeled_masks_df or not selected_masks_option:
-        raise PreventUpdate
-
-    labeled_masks_df = pd.DataFrame(labeled_masks_df)
-
-    labeled_masks_df.loc[
-        (labeled_masks_df[Y_COLUMN] != LABEL_UNLABELED)
-        # & (labeled_masks[Y_COLUMN] != LABEL_WRONG)
-        & (labeled_masks_df[LABELING_MODE_COLUMN] == LABELING_AUTO),
-        LABELING_MODE_COLUMN,
-    ] = LABELING_SEMI_AUTO
-
-    image_data_reader = ImageDataReader(image_filepath)
-    masks_features = image_data_reader.read_masks_features(selected_masks_option)
-    labeled_masks_df.index = masks_features.index
-    masks_features[labeled_masks_df.columns] = labeled_masks_df
-
-    image_data_writer = ImageDataWriter(image_filepath)
-    image_data_writer.write_masks_features(masks_features, selected_masks_option)
-
+    image_filepath = image_data_reader.image_filepath
     masks = image_data_reader.read_masks(selected_masks_option)
     color_by_mask_id = create_color_by_mask_id(labeled_masks_df)
     image = get_masks_img(
@@ -682,6 +700,37 @@ def handle_save_labels_button_click(
     ordered_label_counts.to_csv(
         result_filepath_base + "_label_counts.tsv", sep="\t", index=False
     )
+
+
+def save_labels(
+    labeled_masks_df: pd.DataFrame, image_filepath: str, selected_masks_option: str
+):
+    image_data_reader = ImageDataReader(image_filepath)
+    masks_features = image_data_reader.read_masks_features(selected_masks_option)
+    labeled_masks_df.index = masks_features.index
+    masks_features[labeled_masks_df.columns] = labeled_masks_df
+
+    image_data_writer = ImageDataWriter(image_filepath)
+    image_data_writer.write_masks_features(masks_features, selected_masks_option)
+
+    save_results(image_data_reader, labeled_masks_df, selected_masks_option)
+
+
+@callback(
+    Input(id("save-labels-button"), "n_clicks"),
+    State(id("labeled-masks"), "data"),
+    State(id("image-filepath"), "value"),
+    State(id("masks-options"), "value"),
+)
+@timeit
+def handle_save_labels_button_click(
+    n_clicks, labeled_masks_df, image_filepath, selected_masks_option
+):
+    if n_clicks == 0 or not labeled_masks_df or not selected_masks_option:
+        raise PreventUpdate
+
+    labeled_masks_df = pd.DataFrame(labeled_masks_df)
+    save_labels(labeled_masks_df, image_filepath, selected_masks_option)
 
 
 @callback(
@@ -747,13 +796,15 @@ def handle_masks_filepath_selection(selected_masks_option, image_filepath):
     labeled_masks_df = image_data_reader.read_masks_features(selected_masks_option)
     if CONFIDENCE_COLUMN not in labeled_masks_df.columns:
         labeled_masks_df[CONFIDENCE_COLUMN] = 0.0
-    labeled_masks_df = labeled_masks_df[
-        [MASK_ID_COLUMN, Y_COLUMN, LABELING_MODE_COLUMN, CONFIDENCE_COLUMN]
-    ]
+    labeled_masks_df = _convert_labeled_masks_df_to_dcc_store_format(labeled_masks_df)
 
     assert len(masks) == labeled_masks_df.shape[0]
     rows_of_mask_previews = generate_rows_of_mask_previews(
-        image_data_reader.image, labeled_masks_df, masks, LABELS_METADATA
+        image_data_reader.image,
+        labeled_masks_df,
+        masks,
+        LABELS_METADATA,
+        ALL_MASKS_RADIO_BUTTONS_PREFIX,
     )
 
     return labeled_masks_df.to_dict("records"), rows_of_mask_previews
@@ -807,6 +858,24 @@ def handle_classifier_model_selection(embedder_filepath):
     return construct_embedder_metadata_container(embedder_filepath)
 
 
+def call_train_pipleine(
+    image_filepath: str, is_fine_tune: bool, selected_classifier_model_filepath: str
+):
+    dir = None
+    # Train on data that is under the same subfolder of dataset/ as the currently
+    # selected image.
+    if image_filepath is not None:
+        dir = str(
+            PurePath(RAW_IMAGES_DIR)
+            / PurePath(image_filepath).relative_to(RAW_IMAGES_DIR).parts[0]
+        )
+
+    classifier_model_filepath = (
+        selected_classifier_model_filepath if is_fine_tune else None
+    )
+    train_pipeline(dir=dir, classifier_model_filepath=classifier_model_filepath)
+
+
 @callback(
     Output(id("classifier-model"), "options"),
     Output(id("classifier-model"), "value"),
@@ -825,25 +894,32 @@ def handle_train_classifier_button(
     if train_classifier_n_clicks == 0 and fine_tune_classifier_n_clicks == 0:
         raise PreventUpdate
 
-    classifier_model_filepath = None
-    if ctx.triggered_id == id("fine-tune-classifier-button"):
-        classifier_model_filepath = selected_classifier_model_filepath
+    is_fine_tune = ctx.triggered_id == id("fine-tune-classifier-button")
+    call_train_pipleine(
+        image_filepath, is_fine_tune, selected_classifier_model_filepath
+    )
 
-    dir = None
-    # Train on data that is under the same subfolder of dataset/ as the currently
-    # selected image.
-    if image_filepath is not None:
-        dir = str(
-            PurePath(RAW_IMAGES_DIR)
-            / PurePath(image_filepath).relative_to(RAW_IMAGES_DIR).parts[0]
-        )
-
-    train_pipeline(dir=dir, classifier_model_filepath=classifier_model_filepath)
     model_filepaths = get_classifier_model_filepaths(as_str=True)
     if not model_filepaths:
         return ["none"], "none"
 
     return model_filepaths, model_filepaths[0]
+
+
+def update_labels_from_classifier_output(
+    labeled_masks_df: pd.DataFrame,
+    unlabeled_rows_df: pd.DataFrame,
+    classify_results: ClassifyResults,
+):
+    labeled_masks_df.loc[unlabeled_rows_df, Y_COLUMN] = classify_results.decoded_labels
+    labeled_masks_df.loc[unlabeled_rows_df, LABELING_MODE_COLUMN] = LABELING_AUTO
+
+    # Ensure the DataFrame has a column for confidence scores
+    if CONFIDENCE_COLUMN not in labeled_masks_df.columns:
+        labeled_masks_df[CONFIDENCE_COLUMN] = 0.0
+    labeled_masks_df.loc[unlabeled_rows_df, CONFIDENCE_COLUMN] = (
+        classify_results.confidence_scores
+    )
 
 
 @callback(
@@ -867,21 +943,17 @@ def handle_run_classifier_button(
         raise PreventUpdate
 
     image_data_reader = ImageDataReader(image_filepath)
-    labeled_masks = image_data_reader.read_masks_features(selected_masks_option)
-    unlabled_rows = labeled_masks[Y_COLUMN] == LABEL_UNLABELED
-    classify_results = classify(labeled_masks[unlabled_rows], classifier_model_filepath)
-
-    labeled_masks.loc[unlabled_rows, Y_COLUMN] = classify_results.decoded_labels
-    labeled_masks.loc[unlabled_rows, LABELING_MODE_COLUMN] = LABELING_AUTO
-
-    # Ensure the DataFrame has a column for confidence scores
-    if CONFIDENCE_COLUMN not in labeled_masks.columns:
-        labeled_masks[CONFIDENCE_COLUMN] = 0.0
-    labeled_masks.loc[unlabled_rows, CONFIDENCE_COLUMN] = (
-        classify_results.confidence_scores
+    masks_features_df = image_data_reader.read_masks_features(selected_masks_option)
+    unlabled_rows = masks_features_df[Y_COLUMN] == LABEL_UNLABELED
+    classify_results = classify(
+        masks_features_df[unlabled_rows], classifier_model_filepath
     )
 
-    return labeled_masks.to_dict("records")
+    update_labels_from_classifier_output(
+        masks_features_df, unlabled_rows, classify_results
+    )
+
+    return masks_features_df.to_dict("records")
 
 
 @callback(
@@ -908,3 +980,123 @@ def handle_completed_checkbox(selected_items, image_filepath):
     write_images_metadata(df)
 
     return get_image_filepath_options(predicate_fn=is_completed)
+
+
+def mark_masks_for_needs_review(labeled_masks_df):
+    RLHF_ITEMS_PER_CLASS = 10
+
+    # Shuffle the DataFrame without resetting index
+    labeled_masks_df_shuffled = labeled_masks_df.sample(frac=1)
+
+    # Filter by labeling mode column
+    filtered_df = labeled_masks_df_shuffled[
+        labeled_masks_df_shuffled[LABELING_MODE_COLUMN] == LABELING_AUTO
+    ]
+
+    # Sort by confidence column
+    sorted_df = filtered_df.sort_values(by=CONFIDENCE_COLUMN)
+
+    # Group by Y_COLUMN and select items
+    selected_indices_per_class = (
+        sorted_df.groupby(Y_COLUMN).head(RLHF_ITEMS_PER_CLASS).index
+    )
+
+    # Map selected indices back to original DataFrame
+    original_selected_indices = labeled_masks_df_shuffled.loc[
+        selected_indices_per_class
+    ].index
+
+    # Update initial DataFrame
+    labeled_masks_df.loc[original_selected_indices, LABELING_MODE_COLUMN] = (
+        LABELING_NEEDS_REVIEW
+    )
+
+
+@callback(
+    Output(id("labeled-masks"), "data", allow_duplicate=True),
+    Output(id("rlhf-masks"), "children"),
+    Output(id("classifier-model"), "options", allow_duplicate=True),
+    Output(id("classifier-model"), "value", allow_duplicate=True),
+    Input(id("rlhf-step-button"), "n_clicks"),
+    State(id("classifier-model"), "value"),
+    State(id("image-filepath"), "value"),
+    State(id("masks-options"), "value"),
+    prevent_initial_call=True,
+)
+def handle_rlhf_step_button_click(
+    n_clicks,
+    classifier_model_filepath,
+    image_filepath,
+    selected_masks_option,
+):
+    if (
+        not n_clicks
+        or not image_filepath
+        or not classifier_model_filepath
+        or not is_valid_masks_option(selected_masks_option)
+    ):
+        raise PreventUpdate
+
+    image_data_reader = ImageDataReader(image_filepath)
+    masks_features_df = image_data_reader.read_masks_features(selected_masks_option)
+
+    # 1. Update rows where LABELING_MODE_COLUMN equals LABELING_NEEDS_REVIEW to
+    # LABELING_REVIEWED.
+    masks_features_df.loc[
+        masks_features_df[LABELING_MODE_COLUMN] == LABELING_NEEDS_REVIEW,
+        LABELING_MODE_COLUMN,
+    ] = LABELING_REVIEWED
+
+    # 2. Set not-reviewed labels to unlabeled.
+    masks_features_df.loc[
+        masks_features_df[LABELING_MODE_COLUMN] == LABELING_AUTO,
+        [Y_COLUMN, CONFIDENCE_COLUMN],
+    ] = [LABEL_UNLABELED, 0.0]
+
+    # 3. Save labels.
+    save_labels(masks_features_df, image_filepath, selected_masks_option)
+
+    # 4. Fine tune classifier.
+    call_train_pipleine(
+        image_filepath,
+        is_fine_tune=True,
+        selected_classifier_model_filepath=classifier_model_filepath,
+    )
+    model_filepaths = get_classifier_model_filepaths(as_str=True)
+    fresh_classifier_model_filepath = model_filepaths[0]
+
+    # 5. Classify unlabeled data using fresh classifier.
+    unlabeled_rows = masks_features_df[Y_COLUMN] == LABEL_UNLABELED
+    classify_results = classify(
+        masks_features_df[unlabeled_rows], fresh_classifier_model_filepath
+    )
+    update_labels_from_classifier_output(
+        masks_features_df, unlabeled_rows, classify_results
+    )
+
+    # 6. Select which masks to present for rewiew.
+    mark_masks_for_needs_review(masks_features_df)
+
+    # 7. Create widget for labels review.
+    needs_review_rows = masks_features_df[
+        masks_features_df[LABELING_MODE_COLUMN] == LABELING_NEEDS_REVIEW
+    ]
+    masks_ids_to_match = needs_review_rows[MASK_ID_COLUMN].tolist()
+    image_data_reader = ImageDataReader(image_filepath)
+    masks = image_data_reader.read_masks(selected_masks_option)
+    matched_masks = [mask for mask in masks if mask["id"] in masks_ids_to_match]
+    widget = generate_rows_of_mask_previews(
+        image_data_reader.image,
+        needs_review_rows,
+        matched_masks,
+        LABELS_METADATA,
+        RLHF_MASKS_RADIO_BUTTONS_PREFIX,
+    )
+
+    masks_features_df = _convert_labeled_masks_df_to_dcc_store_format(masks_features_df)
+    return (
+        masks_features_df.to_dict("records"),
+        widget,
+        model_filepaths,
+        fresh_classifier_model_filepath,
+    )

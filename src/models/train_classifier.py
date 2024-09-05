@@ -455,15 +455,18 @@ def log_train_and_val_clusters(
     label_encoder: preprocessing.LabelEncoder,
 ):
     # Plot and save train and val embeddings (as 2d projections).
-    _plot_clusters(
-        tensorboard_writer,
-        train_loader,
-        train_crops,
-        "train_embedding_visualization.png",
-        embedder,
-        label_encoder,
-        log_images_to_tensorboard=False,
-    )
+    try:
+        _plot_clusters(
+            tensorboard_writer,
+            train_loader,
+            train_crops,
+            "train_embedding_visualization.png",
+            embedder,
+            label_encoder,
+            log_images_to_tensorboard=False,
+        )
+    except Exception as e:
+        print(f"An unexpected error occurred when plotting train clusters: {e}")
 
     try:
         _plot_clusters(
@@ -488,12 +491,17 @@ def train_pipeline(dir: str = None, classifier_model_filepath: str = None):
     tensorboard_writer = SummaryWriter(
         log_dir=os.path.join(CLASSIFIER_TENSORBOARD_DIR, embedder_model_info.name)
     )
+
     labeled_data_df, crops = read_labeled_and_reviewed_features_for_all_images(
         dir=dir, with_crops=True, check_data=True
     )
-    assert (
-        labeled_data_df.loc[labeled_data_df[Y_COLUMN] == LABEL_UNLABELED].shape[0] == 0
-    ), "Should not contain unlabeled data"
+    if labeled_data_df.empty:
+        print("No labeled data found. Exiting.")
+        return
+
+    assert labeled_data_df.loc[
+        labeled_data_df[Y_COLUMN] == LABEL_UNLABELED
+    ].empty, "Should not contain unlabeled data"
 
     x_columns = [x for x in labeled_data_df.columns if x.startswith(X_COLUMN_PREFIX)]
 
@@ -512,9 +520,14 @@ def train_pipeline(dir: str = None, classifier_model_filepath: str = None):
     embedder.to(DEVICE)
 
     y = label_encoder.fit_transform(y_labels)
-    x_train, x_test, y_train, y_test, train_crops, val_crops = train_test_split(
-        x, y, crops, random_state=10
-    )
+    train_crops = None
+    val_crops = None
+    if len(crops) == len(x):
+        x_train, x_test, y_train, y_test, train_crops, val_crops = train_test_split(
+            x, y, crops, random_state=10
+        )
+    else:
+        x_train, x_test, y_train, y_test = train_test_split(x, y, random_state=10)
 
     # Use numpy.unique() to get unique elements and their counts
     unique_elements, counts = np.unique(labeled_data_df[Y_COLUMN], return_counts=True)
