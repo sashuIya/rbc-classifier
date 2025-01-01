@@ -24,6 +24,7 @@ from dash import (
 from dash.exceptions import PreventUpdate
 from dash_extensions import EventListener
 from PIL import Image
+from tqdm import tqdm
 
 from src.common.consts import (
     ALL_MASKS_RADIO_BUTTONS_PREFIX,
@@ -659,6 +660,43 @@ def handle_reset_labels_button_click(n_clicks, labeled_masks_df):
     return labeled_masks_df.to_dict("records")
 
 
+def is_countour(segmentation, x, y):
+    _dx = [-1, -1, -1, 0, 0, 1, 1, 1]
+    _dy = [-1, 0, 1, -1, 1, -1, 0, 1]
+    if not segmentation[x][y]:
+        return False
+
+    if (
+        x == 0
+        or y == 0
+        or x + 1 == segmentation.shape[0]
+        or y + 1 == segmentation.shape[1]
+    ):
+        return True
+
+    for dx, dy in zip(_dx, _dy):
+        if not segmentation[x + dx][y + dy]:
+            return True
+
+    return False
+
+
+def find_diameter(mask, coeff):
+    segmentation = mask["segmentation"]
+    countour = []
+    for x0 in range(segmentation.shape[0]):
+        for y0 in range(segmentation.shape[1]):
+            if is_countour(segmentation, x0, y0):
+                countour.append((x0, y0))
+
+    d = 0
+    for x0, y0 in countour:
+        for x1, y1 in countour:
+            d = max(d, (x1 - x0) ** 2 + (y1 - y0) ** 2)
+
+    return d ** (0.5) * coeff
+
+
 def save_results(
     image_data_reader: ImageDataReader,
     labeled_masks_df: pd.DataFrame,
@@ -700,6 +738,19 @@ def save_results(
     ordered_label_counts.to_csv(
         result_filepath_base + "_label_counts.tsv", sep="\t", index=False
     )
+
+    diameters = defaultdict(list)
+    for (_, row), mask in tqdm(zip(labeled_masks_df.iterrows(), masks)):
+        mask_id, label = row[MASK_ID_COLUMN], row[Y_COLUMN]
+        assert mask_id == mask["id"]
+
+        if label in [LABEL_UNLABELED, LABEL_WRONG]:
+            continue
+
+        diameter = find_diameter(mask, coeff=10 / 1212)
+        mask["diameter"] = diameter
+        diameters[label].append(mask["diameter"])
+    print(diameters)
 
 
 def save_labels(
