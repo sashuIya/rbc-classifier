@@ -1,8 +1,11 @@
+import os
+
 import numpy as np
 import pandas as pd
 import torch
 import torchvision.transforms as transforms
-from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
+from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
+from sam2.build_sam import build_sam2
 from torch.utils.data import DataLoader, Dataset
 from torchvision.models import ResNet50_Weights, resnet50
 from tqdm import tqdm
@@ -42,16 +45,37 @@ def sam_model_version(sam_checkpoint_filepath):
     return None
 
 
-def run_sam(image, sam_checkpoint_filepath, crop_n_layers, points_per_crop, sam_config):
+def sam_model_config_filepath(sam_checkpoint_filepath):
+    basename = os.path.basename(sam_checkpoint_filepath)
+
+    config_from_checkpoint = {
+        "sam2.1_hiera_tiny.pt": "configs/sam2.1/sam2.1_hiera_t.yaml",
+        "sam2.1_hiera_small.pt": "configs/sam2.1/sam2.1_hiera_s.yaml",
+        "sam2.1_hiera_base_plus.pt": "configs/sam2.1/sam2.1_hiera_b+.yaml",
+        "sam2.1_hiera_large.pt": "configs/sam2.1/sam2.1_hiera_l.yaml",
+    }
+
+    return config_from_checkpoint[basename]
+
+
+def run_sam(
+    image,
+    sam_checkpoint_filepath,
+    crop_n_layers,
+    points_per_crop,
+    sam_config,
+):
     if DEVICE == "cuda":
         torch.cuda.empty_cache()
 
-    sam = sam_model_registry[sam_model_version(sam_checkpoint_filepath)](
-        checkpoint=sam_checkpoint_filepath
+    sam2 = build_sam2(
+        sam_model_config_filepath(sam_checkpoint_filepath),
+        sam_checkpoint_filepath,
+        device=DEVICE,
+        apply_postprocessing=False,
     )
-    sam.to(device=DEVICE)
-    mask_generator = SamAutomaticMaskGenerator(
-        model=sam,
+    mask_generator = SAM2AutomaticMaskGenerator(
+        model=sam2,
         points_per_side=points_per_crop,
         crop_n_layers=crop_n_layers,
         **sam_config,

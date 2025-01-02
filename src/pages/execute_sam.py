@@ -38,7 +38,7 @@ from src.utils.mask_util import (
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
 SAM_CHECKPOINT_FILEPATHS = get_rel_filepaths_from_subfolders(
-    folder_path=SAM_CHECKPOINTS_FOLDER, extension="pth"
+    folder_path=SAM_CHECKPOINTS_FOLDER, extension="pt"
 )
 SAM_CHECKPOINT_FILEPATHS = [str(f) for f in SAM_CHECKPOINT_FILEPATHS]
 
